@@ -1,0 +1,1617 @@
+From 1b436862ed6253629d79edc2e09826efd4e0f4e3 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 2 Nov 2022 15:01:56 +0100
+Subject: [PATCH 01/20] ucm: fix enhanced ID parsing in
+ snd_use_case_parse_ctl_elem_id()
+
+Reported-by: Takashi Iwai <tiwai@suse.de>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/ucm/main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/ucm/main.c b/src/ucm/main.c
+index 30ab1e41..28c60565 100644
+--- a/src/ucm/main.c
++++ b/src/ucm/main.c
+@@ -2793,7 +2793,7 @@ int snd_use_case_parse_ctl_elem_id(snd_ctl_elem_id_t *dst,
+ 	    strcmp(ucm_id, "CaptureSwitch"))
+ 		return -EINVAL;
+ 	snd_ctl_elem_id_clear(dst);
+-	if (strcasestr(ucm_id, "name="))
++	if (strcasestr(value, "name="))
+ 		return __snd_ctl_ascii_elem_id_parse(dst, value, NULL);
+ 	iface = SND_CTL_ELEM_IFACE_MIXER;
+ 	if (jack_control)
+-- 
+2.39.0
+
+
+From aa4f56c3c952269c36464cc0da9db5a1381648fa Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 9 Nov 2022 08:11:42 +0100
+Subject: [PATCH 02/20] pcm: rate - fix the crash in
+ snd_pcm_rate_may_wait_for_avail_min()
+
+The pcm argument passed to the conversion function in
+snd_pcm_plugin_may_wait_for_avail_min_conv() should be
+pcm->fast_op_arg.
+
+Test command: arecord -Dplughw:x -r12000 -c2 -fS16_LE -M temp.wav
+
+Fixes: d9dbb57b ("pcm: rate - rewrite the may_wait_for_avail_min callback for the rate plugin")
+
+BugLink: https://lore.kernel.org/alsa-devel/1667793912-18957-1-git-send-email-shengjiu.wang@nxp.com/
+Fixes: https://github.com/alsa-project/alsa-lib/issues/282
+Reported-by: Shengjiu Wang <shengjiu.wang@nxp.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/pcm/pcm_plugin.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/pcm/pcm_plugin.c b/src/pcm/pcm_plugin.c
+index 6bb90b8b..ec64604c 100644
+--- a/src/pcm/pcm_plugin.c
++++ b/src/pcm/pcm_plugin.c
+@@ -622,7 +622,7 @@ int snd_pcm_plugin_may_wait_for_avail_min_conv(
+ 		 * This code is also used by extplug, but extplug does not allow to alter the sampling rate.
+ 		 */
+ 		if (conv)
+-			needed_slave_avail_min = conv(pcm, needed_slave_avail_min);
++			needed_slave_avail_min = conv(pcm->fast_op_arg, needed_slave_avail_min);
+ 
+ 		if (slave->avail_min != needed_slave_avail_min) {
+ 			snd_pcm_sw_params_t *swparams;
+-- 
+2.39.0
+
+
+From 39060852d810461dc8cd1464cfb2ffe84da42d56 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 9 Nov 2022 09:31:34 +0100
+Subject: [PATCH 03/20] pcm: rate - correct the previous fix for
+ snd_pcm_rate_may_wait_for_avail_min()
+
+The previous fix in aa4f56c3 was not correct. The root of the cause is
+implementation in snd_pcm_may_wait_for_avail_min() inline function
+where the improper pcm argument is passed to the fast_ops function.
+
+Fixes: aa4f56c3 ("pcm: rate - fix the crash in snd_pcm_rate_may_wait_for_avail_min()")
+Fixes: d9dbb57b ("pcm: rate - rewrite the may_wait_for_avail_min callback for the rate plugin")
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/pcm/pcm_local.h  |  2 +-
+ src/pcm/pcm_plugin.c | 10 +++++++---
+ 2 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/src/pcm/pcm_local.h b/src/pcm/pcm_local.h
+index 8d25971f..ae0c44bf 100644
+--- a/src/pcm/pcm_local.h
++++ b/src/pcm/pcm_local.h
+@@ -1144,7 +1144,7 @@ static inline int snd_pcm_may_wait_for_avail_min(snd_pcm_t *pcm, snd_pcm_uframes
+ 	if (avail >= pcm->avail_min)
+ 		return 0;
+ 	if (pcm->fast_ops->may_wait_for_avail_min)
+-		return pcm->fast_ops->may_wait_for_avail_min(pcm, avail);
++		return pcm->fast_ops->may_wait_for_avail_min(pcm->fast_op_arg, avail);
+ 	return 1;
+ }
+ 
+diff --git a/src/pcm/pcm_plugin.c b/src/pcm/pcm_plugin.c
+index ec64604c..b3af1fb7 100644
+--- a/src/pcm/pcm_plugin.c
++++ b/src/pcm/pcm_plugin.c
+@@ -597,8 +597,12 @@ int snd_pcm_plugin_may_wait_for_avail_min_conv(
+ 		 * a) the slave can provide contineous hw_ptr between periods
+ 		 * b) avail_min does not match one slave_period
+ 		 */
+-		snd_pcm_plugin_t *plugin = pcm->private_data;
+-		snd_pcm_t *slave = plugin->gen.slave;
++		snd_pcm_generic_t *generic = pcm->private_data;
++		/*
++		 * do not use snd_pcm_plugin_t pointer here
++		 * this code is used from the generic plugins, too
++		 */
++		snd_pcm_t *slave = generic->slave;
+ 		snd_pcm_uframes_t needed_slave_avail_min;
+ 		snd_pcm_sframes_t available;
+ 
+@@ -622,7 +626,7 @@ int snd_pcm_plugin_may_wait_for_avail_min_conv(
+ 		 * This code is also used by extplug, but extplug does not allow to alter the sampling rate.
+ 		 */
+ 		if (conv)
+-			needed_slave_avail_min = conv(pcm->fast_op_arg, needed_slave_avail_min);
++			needed_slave_avail_min = conv(pcm, needed_slave_avail_min);
+ 
+ 		if (slave->avail_min != needed_slave_avail_min) {
+ 			snd_pcm_sw_params_t *swparams;
+-- 
+2.39.0
+
+
+From 161f47da5f196c291ac0e11d066fa5ff5f79fa04 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 9 Nov 2022 14:37:45 +0100
+Subject: [PATCH 04/20] include: pcm_old.h - use a macro for the symbol
+ versioning
+
+Make the header file more readable and error prone.
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ include/pcm_old.h | 133 ++++++++++++++++++++++++----------------------
+ 1 file changed, 68 insertions(+), 65 deletions(-)
+
+diff --git a/include/pcm_old.h b/include/pcm_old.h
+index e6e050fc..a9f5308f 100644
+--- a/include/pcm_old.h
++++ b/include/pcm_old.h
+@@ -2,11 +2,14 @@
+  * Old ALSA 0.9.x API
+  */
+ 
++#define ___symbol_version(name, version) \
++	__asm__ (".symver " #name "," #name "@" version)
++
+ #ifdef ALSA_PCM_OLD_HW_PARAMS_API
+ 
+-asm(".symver snd_pcm_hw_params_get_access,snd_pcm_hw_params_get_access@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_access_first,snd_pcm_hw_params_set_access_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_access_last,snd_pcm_hw_params_set_access_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_access, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_access_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_access_last, "ALSA_0.9");
+ 
+ int snd_pcm_hw_params_get_access(const snd_pcm_hw_params_t *params);
+ int snd_pcm_hw_params_test_access(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, snd_pcm_access_t val);
+@@ -16,9 +19,9 @@ snd_pcm_access_t snd_pcm_hw_params_set_access_last(snd_pcm_t *pcm, snd_pcm_hw_pa
+ int snd_pcm_hw_params_set_access_mask(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, snd_pcm_access_mask_t *mask);
+ void snd_pcm_hw_params_get_access_mask(snd_pcm_hw_params_t *params, snd_pcm_access_mask_t *mask);
+ 
+-asm(".symver snd_pcm_hw_params_get_format,snd_pcm_hw_params_get_format@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_format_first,snd_pcm_hw_params_set_format_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_format_last,snd_pcm_hw_params_set_format_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_format, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_format_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_format_last, "ALSA_0.9");
+ 
+ int snd_pcm_hw_params_get_format(const snd_pcm_hw_params_t *params);
+ int snd_pcm_hw_params_test_format(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, snd_pcm_format_t val);
+@@ -28,9 +31,9 @@ snd_pcm_format_t snd_pcm_hw_params_set_format_last(snd_pcm_t *pcm, snd_pcm_hw_pa
+ int snd_pcm_hw_params_set_format_mask(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, snd_pcm_format_mask_t *mask);
+ void snd_pcm_hw_params_get_format_mask(snd_pcm_hw_params_t *params, snd_pcm_format_mask_t *mask);
+ 
+-asm(".symver snd_pcm_hw_params_get_subformat,snd_pcm_hw_params_get_subformat@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_subformat_first,snd_pcm_hw_params_set_subformat_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_subformat_last,snd_pcm_hw_params_set_subformat_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_subformat, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_subformat_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_subformat_last, "ALSA_0.9");
+ 
+ int snd_pcm_hw_params_test_subformat(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, snd_pcm_subformat_t val);
+ int snd_pcm_hw_params_get_subformat(const snd_pcm_hw_params_t *params);
+@@ -40,12 +43,12 @@ snd_pcm_subformat_t snd_pcm_hw_params_set_subformat_last(snd_pcm_t *pcm, snd_pcm
+ int snd_pcm_hw_params_set_subformat_mask(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, snd_pcm_subformat_mask_t *mask);
+ void snd_pcm_hw_params_get_subformat_mask(snd_pcm_hw_params_t *params, snd_pcm_subformat_mask_t *mask);
+ 
+-asm(".symver snd_pcm_hw_params_get_channels,snd_pcm_hw_params_get_channels@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_channels_min,snd_pcm_hw_params_get_channels_min@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_channels_max,snd_pcm_hw_params_get_channels_max@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_channels_near,snd_pcm_hw_params_set_channels_near@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_channels_first,snd_pcm_hw_params_set_channels_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_channels_last,snd_pcm_hw_params_set_channels_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_channels, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_channels_min, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_channels_max, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_channels_near, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_channels_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_channels_last, "ALSA_0.9");
+ 
+ int snd_pcm_hw_params_get_channels(const snd_pcm_hw_params_t *params);
+ unsigned int snd_pcm_hw_params_get_channels_min(const snd_pcm_hw_params_t *params);
+@@ -59,12 +62,12 @@ unsigned int snd_pcm_hw_params_set_channels_near(snd_pcm_t *pcm, snd_pcm_hw_para
+ unsigned int snd_pcm_hw_params_set_channels_first(snd_pcm_t *pcm, snd_pcm_hw_params_t *params);
+ unsigned int snd_pcm_hw_params_set_channels_last(snd_pcm_t *pcm, snd_pcm_hw_params_t *params);
+ 
+-asm(".symver snd_pcm_hw_params_get_rate,snd_pcm_hw_params_get_rate@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_rate_min,snd_pcm_hw_params_get_rate_min@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_rate_max,snd_pcm_hw_params_get_rate_max@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_rate_near,snd_pcm_hw_params_set_rate_near@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_rate_first,snd_pcm_hw_params_set_rate_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_rate_last,snd_pcm_hw_params_set_rate_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_rate, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_rate_min, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_rate_max, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_rate_near, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_rate_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_rate_last, "ALSA_0.9");
+ 
+ int snd_pcm_hw_params_get_rate(const snd_pcm_hw_params_t *params, int *dir);
+ unsigned int snd_pcm_hw_params_get_rate_min(const snd_pcm_hw_params_t *params, int *dir);
+@@ -80,12 +83,12 @@ unsigned int snd_pcm_hw_params_set_rate_last(snd_pcm_t *pcm, snd_pcm_hw_params_t
+ int snd_pcm_hw_params_set_rate_resample(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, unsigned int val);
+ int snd_pcm_hw_params_get_rate_resample(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, unsigned int *val);
+ 
+-asm(".symver snd_pcm_hw_params_get_period_time,snd_pcm_hw_params_get_period_time@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_period_time_min,snd_pcm_hw_params_get_period_time_min@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_period_time_max,snd_pcm_hw_params_get_period_time_max@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_period_time_near,snd_pcm_hw_params_set_period_time_near@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_period_time_first,snd_pcm_hw_params_set_period_time_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_period_time_last,snd_pcm_hw_params_set_period_time_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_period_time, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_period_time_min, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_period_time_max, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_period_time_near, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_period_time_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_period_time_last, "ALSA_0.9");
+ 
+ int snd_pcm_hw_params_get_period_time(const snd_pcm_hw_params_t *params, int *dir);
+ unsigned int snd_pcm_hw_params_get_period_time_min(const snd_pcm_hw_params_t *params, int *dir);
+@@ -99,12 +102,12 @@ unsigned int snd_pcm_hw_params_set_period_time_near(snd_pcm_t *pcm, snd_pcm_hw_p
+ unsigned int snd_pcm_hw_params_set_period_time_first(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, int *dir);
+ unsigned int snd_pcm_hw_params_set_period_time_last(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, int *dir);
+ 
+-asm(".symver snd_pcm_hw_params_get_period_size,snd_pcm_hw_params_get_period_size@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_period_size_min,snd_pcm_hw_params_get_period_size_min@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_period_size_max,snd_pcm_hw_params_get_period_size_max@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_period_size_near,snd_pcm_hw_params_set_period_size_near@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_period_size_first,snd_pcm_hw_params_set_period_size_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_period_size_last,snd_pcm_hw_params_set_period_size_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_period_size, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_period_size_min, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_period_size_max, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_period_size_near, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_period_size_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_period_size_last, "ALSA_0.9");
+ 
+ snd_pcm_sframes_t snd_pcm_hw_params_get_period_size(const snd_pcm_hw_params_t *params, int *dir);
+ snd_pcm_uframes_t snd_pcm_hw_params_get_period_size_min(const snd_pcm_hw_params_t *params, int *dir);
+@@ -119,12 +122,12 @@ snd_pcm_uframes_t snd_pcm_hw_params_set_period_size_first(snd_pcm_t *pcm, snd_pc
+ snd_pcm_uframes_t snd_pcm_hw_params_set_period_size_last(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, int *dir);
+ int snd_pcm_hw_params_set_period_size_integer(snd_pcm_t *pcm, snd_pcm_hw_params_t *params);
+ 
+-asm(".symver snd_pcm_hw_params_get_periods,snd_pcm_hw_params_get_periods@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_periods_min,snd_pcm_hw_params_get_periods_min@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_periods_max,snd_pcm_hw_params_get_periods_max@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_periods_near,snd_pcm_hw_params_set_periods_near@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_periods_first,snd_pcm_hw_params_set_periods_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_periods_last,snd_pcm_hw_params_set_periods_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_periods, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_periods_min, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_periods_max, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_periods_near, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_periods_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_periods_last, "ALSA_0.9");
+ 
+ int snd_pcm_hw_params_get_periods(const snd_pcm_hw_params_t *params, int *dir);
+ unsigned int snd_pcm_hw_params_get_periods_min(const snd_pcm_hw_params_t *params, int *dir);
+@@ -139,12 +142,12 @@ unsigned int snd_pcm_hw_params_set_periods_first(snd_pcm_t *pcm, snd_pcm_hw_para
+ unsigned int snd_pcm_hw_params_set_periods_last(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, int *dir);
+ int snd_pcm_hw_params_set_periods_integer(snd_pcm_t *pcm, snd_pcm_hw_params_t *params);
+ 
+-asm(".symver snd_pcm_hw_params_get_buffer_time,snd_pcm_hw_params_get_buffer_time@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_buffer_time_min,snd_pcm_hw_params_get_buffer_time_min@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_buffer_time_max,snd_pcm_hw_params_get_buffer_time_max@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_buffer_time_near,snd_pcm_hw_params_set_buffer_time_near@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_buffer_time_first,snd_pcm_hw_params_set_buffer_time_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_buffer_time_last,snd_pcm_hw_params_set_buffer_time_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_buffer_time, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_buffer_time_min, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_buffer_time_max, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_buffer_time_near, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_buffer_time_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_buffer_time_last, "ALSA_0.9");
+ 
+ int snd_pcm_hw_params_get_buffer_time(const snd_pcm_hw_params_t *params, int *dir);
+ unsigned int snd_pcm_hw_params_get_buffer_time_min(const snd_pcm_hw_params_t *params, int *dir);
+@@ -158,12 +161,12 @@ unsigned int snd_pcm_hw_params_set_buffer_time_near(snd_pcm_t *pcm, snd_pcm_hw_p
+ unsigned int snd_pcm_hw_params_set_buffer_time_first(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, int *dir);
+ unsigned int snd_pcm_hw_params_set_buffer_time_last(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, int *dir);
+ 
+-asm(".symver snd_pcm_hw_params_get_buffer_size,snd_pcm_hw_params_get_buffer_size@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_buffer_size_min,snd_pcm_hw_params_get_buffer_size_min@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_buffer_size_max,snd_pcm_hw_params_get_buffer_size_max@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_buffer_size_near,snd_pcm_hw_params_set_buffer_size_near@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_buffer_size_first,snd_pcm_hw_params_set_buffer_size_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_buffer_size_last,snd_pcm_hw_params_set_buffer_size_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_buffer_size, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_buffer_size_min, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_buffer_size_max, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_buffer_size_near, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_buffer_size_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_buffer_size_last, "ALSA_0.9");
+ 
+ snd_pcm_sframes_t snd_pcm_hw_params_get_buffer_size(const snd_pcm_hw_params_t *params);
+ snd_pcm_uframes_t snd_pcm_hw_params_get_buffer_size_min(const snd_pcm_hw_params_t *params);
+@@ -177,12 +180,12 @@ snd_pcm_uframes_t snd_pcm_hw_params_set_buffer_size_near(snd_pcm_t *pcm, snd_pcm
+ snd_pcm_uframes_t snd_pcm_hw_params_set_buffer_size_first(snd_pcm_t *pcm, snd_pcm_hw_params_t *params);
+ snd_pcm_uframes_t snd_pcm_hw_params_set_buffer_size_last(snd_pcm_t *pcm, snd_pcm_hw_params_t *params);
+ 
+-asm(".symver snd_pcm_hw_params_get_tick_time,snd_pcm_hw_params_get_tick_time@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_tick_time_min,snd_pcm_hw_params_get_tick_time_min@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_get_tick_time_max,snd_pcm_hw_params_get_tick_time_max@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_tick_time_near,snd_pcm_hw_params_set_tick_time_near@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_tick_time_first,snd_pcm_hw_params_set_tick_time_first@ALSA_0.9");
+-asm(".symver snd_pcm_hw_params_set_tick_time_last,snd_pcm_hw_params_set_tick_time_last@ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_tick_time, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_tick_time_min, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_get_tick_time_max, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_tick_time_near, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_tick_time_first, "ALSA_0.9");
++___symbol_version(snd_pcm_hw_params_set_tick_time_last, "ALSA_0.9");
+ 
+ int snd_pcm_hw_params_get_tick_time(const snd_pcm_hw_params_t *params, int *dir);
+ unsigned int snd_pcm_hw_params_get_tick_time_min(const snd_pcm_hw_params_t *params, int *dir);
+@@ -201,14 +204,14 @@ unsigned int snd_pcm_hw_params_set_tick_time_last(snd_pcm_t *pcm, snd_pcm_hw_par
+ 
+ #ifdef ALSA_PCM_OLD_SW_PARAMS_API
+ 
+-asm(".symver snd_pcm_sw_params_get_tstamp_mode,snd_pcm_sw_params_get_tstamp_mode@ALSA_0.9");
+-asm(".symver snd_pcm_sw_params_get_sleep_min,snd_pcm_sw_params_get_sleep_min@ALSA_0.9");
+-asm(".symver snd_pcm_sw_params_get_avail_min,snd_pcm_sw_params_get_avail_min@ALSA_0.9");
+-asm(".symver snd_pcm_sw_params_get_xfer_align,snd_pcm_sw_params_get_xfer_align@ALSA_0.9");
+-asm(".symver snd_pcm_sw_params_get_start_threshold,snd_pcm_sw_params_get_start_threshold@ALSA_0.9");
+-asm(".symver snd_pcm_sw_params_get_stop_threshold,snd_pcm_sw_params_get_stop_threshold@ALSA_0.9");
+-asm(".symver snd_pcm_sw_params_get_silence_threshold,snd_pcm_sw_params_get_silence_threshold@ALSA_0.9");
+-asm(".symver snd_pcm_sw_params_get_silence_size,snd_pcm_sw_params_get_silence_size@ALSA_0.9");
++___symbol_version(snd_pcm_sw_params_get_tstamp_mode, "ALSA_0.9");
++___symbol_version(snd_pcm_sw_params_get_sleep_min, "ALSA_0.9");
++___symbol_version(snd_pcm_sw_params_get_avail_min, "ALSA_0.9");
++___symbol_version(snd_pcm_sw_params_get_xfer_align, "ALSA_0.9");
++___symbol_version(snd_pcm_sw_params_get_start_threshold, "ALSA_0.9");
++___symbol_version(snd_pcm_sw_params_get_stop_threshold, "ALSA_0.9");
++___symbol_version(snd_pcm_sw_params_get_silence_threshold, "ALSA_0.9");
++___symbol_version(snd_pcm_sw_params_get_silence_size, "ALSA_0.9");
+ 
+ int snd_pcm_sw_params_set_tstamp_mode(snd_pcm_t *pcm, snd_pcm_sw_params_t *params, snd_pcm_tstamp_t val);
+ snd_pcm_tstamp_t snd_pcm_sw_params_get_tstamp_mode(const snd_pcm_sw_params_t *params);
+-- 
+2.39.0
+
+
+From 152983f01b0bc1178ea0d461ebf66e2d2a8e2e02 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 9 Nov 2022 15:04:06 +0100
+Subject: [PATCH 05/20] include: alsa-symbols.h - use newer gcc symver function
+ attribute
+
+Use the symver function attribute for newer gccs (version 11+).
+The symver function attribute was introduced probably earlier
+(gcc-10). We can fix that on demand later.
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ include/alsa-symbols.h | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/include/alsa-symbols.h b/include/alsa-symbols.h
+index 344f021a..f8c49103 100644
+--- a/include/alsa-symbols.h
++++ b/include/alsa-symbols.h
+@@ -29,10 +29,17 @@
+ #define INTERNAL_CONCAT2_2(Pre, Post) Pre##Post
+ #define INTERNAL(Name) INTERNAL_CONCAT2_2(__, Name)
+ 
++#if __GNUC__ > 10
++#define symbol_version(real, name, version) \
++	extern __typeof (real) real __attribute__((symver (#name "@" #version)))
++#define default_symbol_version(real, name, version) \
++	extern __typeof (real) real __attribute__((symver (#name "@@" #version)))
++#else
+ #define symbol_version(real, name, version) \
+ 	__asm__ (".symver " ASM_NAME(#real) "," ASM_NAME(#name) "@" #version)
+ #define default_symbol_version(real, name, version) \
+ 	__asm__ (".symver " ASM_NAME(#real) "," ASM_NAME(#name) "@@" #version)
++#endif
+ 
+ #ifdef __clang__
+ #define EXPORT_SYMBOL __attribute__((visibility("default")))
+-- 
+2.39.0
+
+
+From 78b20e3caa7bba930095e05f3f8cbe665204fcfd Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Mon, 14 Nov 2022 12:36:04 +0100
+Subject: [PATCH 06/20] test: latency - use snd_pcm_format_physical_width()
+
+We need to allocate frames using the physical size not
+the sample bit size.
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/topology/ctl.c | 7 ++++++-
+ test/latency.c     | 6 +++---
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/src/topology/ctl.c b/src/topology/ctl.c
+index dd05424d..2c500ffc 100644
+--- a/src/topology/ctl.c
++++ b/src/topology/ctl.c
+@@ -17,9 +17,13 @@
+            Liam Girdwood <liam.r.girdwood@linux.intel.com>
+ */
+ 
++#define ALSA_PCM_OLD_HW_PARAMS_API 1
++#define ALSA_PCM_OLD_SW_PARAMS_API 1
++#include "../../include/asoundlib.h"
+ #include "list.h"
+ #include "tplg_local.h"
+ 
++
+ #define ENUM_VAL_SIZE 	(SNDRV_CTL_ELEM_ID_NAME_MAXLEN >> 2)
+ 
+ struct ctl_access_elem {
+@@ -71,7 +75,8 @@ static int parse_access_values(snd_config_t *cfg,
+ 			}
+ 		}
+ 	}
+-
++	return snd_pcm_hw_params_get_channels(NULL);
++	//return snd_pcm_hw_params_get_access(NULL);
+ 	return 0;
+ }
+ 
+diff --git a/test/latency.c b/test/latency.c
+index 298bab8a..95b3c0ee 100644
+--- a/test/latency.c
++++ b/test/latency.c
+@@ -354,7 +354,7 @@ long readbuf(snd_pcm_t *handle, char *buf, long len, size_t *frames, size_t *max
+ 		}
+ 		// printf("read = %li\n", r);
+ 	} else {
+-		int frame_bytes = (snd_pcm_format_width(format) / 8) * channels;
++		int frame_bytes = (snd_pcm_format_physical_width(format) / 8) * channels;
+ 		do {
+ 			r = snd_pcm_readi(handle, buf, len);
+ 			if (r > 0) {
+@@ -374,7 +374,7 @@ long readbuf(snd_pcm_t *handle, char *buf, long len, size_t *frames, size_t *max
+ long writebuf(snd_pcm_t *handle, char *buf, long len, size_t *frames)
+ {
+ 	long r;
+-	int frame_bytes = (snd_pcm_format_width(format) / 8) * channels;
++	int frame_bytes = (snd_pcm_format_physical_width(format) / 8) * channels;
+ 
+ 	while (len > 0) {
+ 		r = snd_pcm_writei(handle, buf, len);
+@@ -579,7 +579,7 @@ int main(int argc, char *argv[])
+ 
+ 	loop_limit = loop_sec * rate;
+ 	latency = latency_min - 4;
+-	buffer = malloc((latency_max * snd_pcm_format_width(format) / 8) * 2);
++	buffer = malloc((latency_max * snd_pcm_format_physical_width(format) / 8) * 2);
+ 
+ 	setscheduler();
+ 
+-- 
+2.39.0
+
+
+From 425e4d1fbea4965ea0fb7529b1ee6cbb47eb7227 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Mon, 14 Nov 2022 14:34:46 +0100
+Subject: [PATCH 07/20] pcm: fix the fast_ops pcm argument for fast_ops
+
+The fast_ops callback invocation must always pass the fast_op_arg
+as the pcm argument. Plugins expect that.
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/pcm/pcm.c        | 4 ++--
+ src/pcm/pcm_direct.c | 2 +-
+ src/pcm/pcm_hw.c     | 2 +-
+ src/pcm/pcm_multi.c  | 5 +++--
+ 4 files changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/src/pcm/pcm.c b/src/pcm/pcm.c
+index 927aa055..2b966d44 100644
+--- a/src/pcm/pcm.c
++++ b/src/pcm/pcm.c
+@@ -1705,7 +1705,7 @@ int snd_pcm_link(snd_pcm_t *pcm1, snd_pcm_t *pcm2)
+ 	assert(pcm1);
+ 	assert(pcm2);
+ 	if (pcm1->fast_ops->link)
+-		err = pcm1->fast_ops->link(pcm1, pcm2);
++		err = pcm1->fast_ops->link(pcm1->fast_op_arg, pcm2);
+ 	else
+ 		err = -ENOSYS;
+ 	return err;
+@@ -1722,7 +1722,7 @@ int snd_pcm_unlink(snd_pcm_t *pcm)
+ 
+ 	assert(pcm);
+ 	if (pcm->fast_ops->unlink)
+-		err = pcm->fast_ops->unlink(pcm);
++		err = pcm->fast_ops->unlink(pcm->fast_op_arg);
+ 	else
+ 		err = -ENOSYS;
+ 	return err;
+diff --git a/src/pcm/pcm_direct.c b/src/pcm/pcm_direct.c
+index 4803b81b..3cc5305f 100644
+--- a/src/pcm/pcm_direct.c
++++ b/src/pcm/pcm_direct.c
+@@ -688,7 +688,7 @@ int snd_pcm_direct_check_xrun(snd_pcm_direct_t *direct, snd_pcm_t *pcm)
+ 		 * so don't increment but just update to actual counter
+ 		 */
+ 		direct->recoveries = direct->shmptr->s.recoveries;
+-		pcm->fast_ops->drop(pcm);
++		pcm->fast_ops->drop(pcm->fast_op_arg);
+ 		/* trigger_tstamp update is missing in drop callbacks */
+ 		gettimestamp(&direct->trigger_tstamp, pcm->tstamp_type);
+ 		/* no timer clear:
+diff --git a/src/pcm/pcm_hw.c b/src/pcm/pcm_hw.c
+index 5dfe32ee..0588ce5e 100644
+--- a/src/pcm/pcm_hw.c
++++ b/src/pcm/pcm_hw.c
+@@ -838,7 +838,7 @@ static int snd_pcm_hw_link(snd_pcm_t *pcm1, snd_pcm_t *pcm2)
+ {
+ 	if (pcm2->type != SND_PCM_TYPE_HW) {
+ 		if (pcm2->fast_ops->link_slaves)
+-			return pcm2->fast_ops->link_slaves(pcm2, pcm1);
++			return pcm2->fast_ops->link_slaves(pcm2->fast_op_arg, pcm1);
+ 		return -ENOSYS;
+ 	}
+ 	return hw_link(pcm1, pcm2);
+diff --git a/src/pcm/pcm_multi.c b/src/pcm/pcm_multi.c
+index bec6d06f..3e7ce82c 100644
+--- a/src/pcm/pcm_multi.c
++++ b/src/pcm/pcm_multi.c
+@@ -759,8 +759,9 @@ static int snd_pcm_multi_link_slaves(snd_pcm_t *pcm, snd_pcm_t *master)
+ static int snd_pcm_multi_link(snd_pcm_t *pcm1, snd_pcm_t *pcm2)
+ {
+ 	snd_pcm_multi_t *multi = pcm1->private_data;
+-	if (multi->slaves[0].pcm->fast_ops->link)
+-		return multi->slaves[0].pcm->fast_ops->link(multi->slaves[0].pcm, pcm2);
++	snd_pcm_t *main_pcm = multi->slaves[0].pcm;
++	if (main_pcm->fast_ops->link)
++		return main_pcm->fast_ops->link(main_pcm->fast_op_arg, pcm2);
+ 	return -ENOSYS;
+ }
+ 
+-- 
+2.39.0
+
+
+From 3e4aeba25bf4a4808183c4b64270f7321b436c13 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Mon, 14 Nov 2022 20:42:10 +0100
+Subject: [PATCH 08/20] test: latency - add more realtime tests
+
+Add '-x' and '-X' tests and '-U' - I/O update mode based
+on the system timing.
+
+It may be required to check the position updates for the specific hardware.
+Print the real time / stream time differences.
+
+Also include code to make valgrind happy (including the wrong memory
+llocation for the stream buffer).
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ test/latency.c | 163 +++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 151 insertions(+), 12 deletions(-)
+
+diff --git a/test/latency.c b/test/latency.c
+index 95b3c0ee..91bef1a1 100644
+--- a/test/latency.c
++++ b/test/latency.c
+@@ -33,10 +33,13 @@
+ #include <sched.h>
+ #include <errno.h>
+ #include <getopt.h>
++#include <time.h>
+ #include "../include/asoundlib.h"
+ #include <sys/time.h>
+ #include <math.h>
+ 
++typedef struct timespec timestamp_t;
++
+ char *pdevice = "hw:0,0";
+ char *cdevice = "hw:0,0";
+ snd_pcm_format_t format = SND_PCM_FORMAT_S16_LE;
+@@ -50,10 +53,40 @@ int loop_sec = 30;		/* seconds */
+ int block = 0;			/* block mode */
+ int use_poll = 0;
+ int resample = 1;
++int sys_latency = 0;		/* data I/O: use system timings instead driver wakeups */
++int pos_dump = 0;		/* dump positions */
++int realtime_check = 0;
+ unsigned long loop_limit;
++snd_pcm_uframes_t playback_buffer_size;
+ 
+ snd_output_t *output = NULL;
+ 
++static inline long long frames_to_micro(size_t frames)
++{
++	return (long long)((frames * 1000000LL) + (rate / 2)) / rate;
++}
++
++void timestamp_now(timestamp_t *tstamp)
++{
++	if (clock_gettime(CLOCK_MONOTONIC_RAW, tstamp))
++		printf("clock_gettime() failed\n");
++}
++
++long long timestamp_diff_micro(timestamp_t *tstamp)
++{
++	timestamp_t now, diff;
++	timestamp_now(&now);
++	if (tstamp->tv_nsec > now.tv_nsec) {
++		diff.tv_sec = now.tv_sec - tstamp->tv_sec - 1;
++		diff.tv_nsec = (now.tv_nsec + 1000000000L) - tstamp->tv_nsec;
++	} else {
++		diff.tv_sec = now.tv_sec - tstamp->tv_sec;
++		diff.tv_nsec = now.tv_nsec - tstamp->tv_nsec;
++	}
++	/* microseconds */
++	return (diff.tv_sec * 1000000) + ((diff.tv_nsec + 500L) / 1000L);
++}
++
+ int setparams_stream(snd_pcm_t *handle,
+ 		     snd_pcm_hw_params_t *params,
+ 		     const char *id)
+@@ -96,6 +129,14 @@ int setparams_stream(snd_pcm_t *handle,
+ 		printf("Rate doesn't match (requested %iHz, get %iHz)\n", rate, err);
+ 		return -EINVAL;
+ 	}
++	/* we do not want driver wakeups */
++	if (sys_latency > 0 && snd_pcm_hw_params_can_disable_period_wakeup(params)) {
++		err = snd_pcm_hw_params_set_period_wakeup(handle, params, 0);
++		if (err < 0) {
++			printf("Cannot disable period wakeups for %s\n", id);
++			return err;
++		}
++	}
+ 	return 0;
+ }
+ 
+@@ -227,6 +268,7 @@ int setparams(snd_pcm_t *phandle, snd_pcm_t *chandle, int *bufsize)
+ 		goto __again;
+ 
+ 	snd_pcm_hw_params_get_buffer_size(p_params, &p_size);
++	playback_buffer_size = p_size;
+ 	if (p_psize * 2 < p_size) {
+                 snd_pcm_hw_params_get_periods_min(p_params, &val, NULL);
+                 if (val > 2) {
+@@ -390,7 +432,7 @@ long writebuf(snd_pcm_t *handle, char *buf, long len, size_t *frames)
+ 	}
+ 	return 0;
+ }
+-			
++
+ #define FILTERSWEEP_LFO_CENTER 2000.
+ #define FILTERSWEEP_LFO_DEPTH 1800.
+ #define FILTERSWEEP_LFO_FREQ 0.2
+@@ -434,6 +476,19 @@ void applyeffect(char* buffer,int r)
+ 	}
+ }
+ 
++static ssize_t get_avail(snd_pcm_t *pcm)
++{
++	ssize_t avail;
++
++	while (1) {
++		avail = snd_pcm_avail(pcm);
++		if (avail == -EAGAIN)
++			continue;
++		break;
++	}
++	return avail;
++}
++
+ void help(void)
+ {
+ 	int k;
+@@ -444,6 +499,7 @@ void help(void)
+ "-C,--cdevice   capture device\n"
+ "-m,--min       minimum latency in frames\n"
+ "-M,--max       maximum latency in frames\n"
++"-U,--updates   I/O updates in milliseconds (0 = off)\n"
+ "-F,--frames    frames to transfer\n"
+ "-f,--format    sample format\n"
+ "-c,--channels  channels\n"
+@@ -454,6 +510,8 @@ void help(void)
+ "-b,--block     block mode\n"
+ "-p,--poll      use poll (wait for event - reduces CPU usage)\n"
+ "-e,--effect    apply an effect (bandpass filter sweep)\n"
++"-x,--posdump   dump buffer positions\n"
++"-X,--realtime  do a realtime check (buffering)\n"
+ );
+         printf("Recognized sample formats are:");
+         for (k = 0; k < SND_PCM_FORMAT_LAST; ++k) {
+@@ -480,6 +538,7 @@ int main(int argc, char *argv[])
+ 		{"cdevice", 1, NULL, 'C'},
+ 		{"min", 1, NULL, 'm'},
+ 		{"max", 1, NULL, 'M'},
++		{"updates", 1, NULL, 'U'},
+ 		{"frames", 1, NULL, 'F'},
+ 		{"format", 1, NULL, 'f'},
+ 		{"channels", 1, NULL, 'c'},
+@@ -490,20 +549,23 @@ int main(int argc, char *argv[])
+ 		{"block", 0, NULL, 'b'},
+ 		{"poll", 0, NULL, 'p'},
+ 		{"effect", 0, NULL, 'e'},
++		{"posdump", 0, NULL, 'x'},
++		{"realtime", 0, NULL, 'X'},
+ 		{NULL, 0, NULL, 0},
+ 	};
+ 	snd_pcm_t *phandle, *chandle;
+ 	char *buffer;
+ 	int err, latency, morehelp;
+-	int ok;
++	int ok, first_avail;
+ 	snd_timestamp_t p_tstamp, c_tstamp;
+-	ssize_t r;
++	ssize_t r, cap_avail, cap_avail_max, pbk_fill, pbk_fill_min;
+ 	size_t frames_in, frames_out, in_max;
++	timestamp_t tstamp_start;
+ 	int effect = 0;
+ 	morehelp = 0;
+ 	while (1) {
+ 		int c;
+-		if ((c = getopt_long(argc, argv, "hP:C:m:M:F:f:c:r:B:E:s:bpen", long_option, NULL)) < 0)
++		if ((c = getopt_long(argc, argv, "hP:C:m:M:U:F:f:c:r:B:E:s:bpenxX", long_option, NULL)) < 0)
+ 			break;
+ 		switch (c) {
+ 		case 'h':
+@@ -525,6 +587,10 @@ int main(int argc, char *argv[])
+ 			err = atoi(optarg) / 2;
+ 			latency_max = latency_min > err ? latency_min : err;
+ 			break;
++		case 'U':
++			err = atoi(optarg);
++			sys_latency = err <= 0 ? 0 : err;
++			break;
+ 		case 'f':
+ 			format = snd_pcm_format_value(optarg);
+ 			if (format == SND_PCM_FORMAT_UNKNOWN) {
+@@ -564,6 +630,12 @@ int main(int argc, char *argv[])
+ 		case 'n':
+ 			resample = 0;
+ 			break;
++		case 'x':
++			pos_dump = 1;
++			break;
++		case 'X':
++			realtime_check = 1;
++			break;
+ 		}
+ 	}
+ 
+@@ -579,15 +651,27 @@ int main(int argc, char *argv[])
+ 
+ 	loop_limit = loop_sec * rate;
+ 	latency = latency_min - 4;
+-	buffer = malloc((latency_max * snd_pcm_format_physical_width(format) / 8) * 2);
++	buffer = malloc((latency_max * 2 * snd_pcm_format_physical_width(format) / 8) * channels);
++
++	/* I/O updates based on a system timer */
++	if (sys_latency > 0) {
++		block = 0;
++		use_poll = 0;
++	}
+ 
+ 	setscheduler();
+ 
+ 	printf("Playback device is %s\n", pdevice);
+ 	printf("Capture device is %s\n", cdevice);
+-	printf("Parameters are %iHz, %s, %i channels, %s mode\n", rate, snd_pcm_format_name(format), channels, block ? "blocking" : "non-blocking");
+-	printf("Poll mode: %s\n", use_poll ? "yes" : "no");
+-	printf("Loop limit is %lu frames, minimum latency = %i, maximum latency = %i\n", loop_limit, latency_min * 2, latency_max * 2);
++	printf("Parameters are %iHz, %s, %i channels, %s mode, use poll %s\n",
++			rate, snd_pcm_format_name(format),
++			channels, block ? "blocking" : "non-blocking",
++			use_poll ? "yes" : "no");
++	printf("Loop limit is %lu frames, minimum latency = %i, maximum latency = %i",
++			loop_limit, latency_min * 2, latency_max * 2);
++	if (sys_latency > 0)
++		printf(", I/O updates %ims", sys_latency);
++	printf("\n");
+ 
+ 	if ((err = snd_pcm_open(&phandle, pdevice, SND_PCM_STREAM_PLAYBACK, block ? 0 : SND_PCM_NONBLOCK)) < 0) {
+ 		printf("Playback open error: %s\n", snd_strerror(err));
+@@ -613,6 +697,9 @@ int main(int argc, char *argv[])
+ 		y[1] = (float*) malloc(channels*sizeof(float));		
+ 		y[2] = (float*) malloc(channels*sizeof(float));		
+ 	}
++
++	cap_avail_max = 0;
++	pbk_fill_min = latency * 2;
+ 			  
+ 	while (1) {
+ 		frames_in = frames_out = 0;
+@@ -623,7 +710,7 @@ int main(int argc, char *argv[])
+ 			printf("Streams link error: %s\n", snd_strerror(err));
+ 			exit(0);
+ 		}
+-		if (snd_pcm_format_set_silence(format, buffer, latency*channels) < 0) {
++		if (snd_pcm_format_set_silence(format, buffer, latency * channels) < 0) {
+ 			fprintf(stderr, "silence error\n");
+ 			break;
+ 		}
+@@ -640,6 +727,8 @@ int main(int argc, char *argv[])
+ 			printf("Go error: %s\n", snd_strerror(err));
+ 			exit(0);
+ 		}
++		if (realtime_check)
++			timestamp_now(&tstamp_start);
+ 		gettimestamp(phandle, &p_tstamp);
+ 		gettimestamp(chandle, &c_tstamp);
+ #if 0
+@@ -651,16 +740,54 @@ int main(int argc, char *argv[])
+ 
+ 		ok = 1;
+ 		in_max = 0;
++		first_avail = 1;
+ 		while (ok && frames_in < loop_limit) {
+-			if (use_poll) {
++			cap_avail = latency;
++			if (sys_latency > 0) {
++				poll(NULL, 0, sys_latency);
++				cap_avail = get_avail(chandle);
++				if (cap_avail < 0) {
++					printf("Avail failed: %s\n", snd_strerror(cap_avail));
++					ok = 0;
++					break;
++				}
++				if (first_avail && realtime_check) {
++					long long diff = timestamp_diff_micro(&tstamp_start);
++					long long pos = frames_to_micro(cap_avail);
++					printf("POS FIRST CHECK: c=%zd (rt=%lldus)\n", cap_avail, pos - diff);
++					first_avail = 0;
++				}
++			} else if (use_poll) {
+ 				/* use poll to wait for next event */
+ 				snd_pcm_wait(chandle, 1000);
+ 			}
+-			if ((r = readbuf(chandle, buffer, latency, &frames_in, &in_max)) < 0)
++			if (pos_dump || realtime_check) {
++				if (sys_latency <= 0)
++					cap_avail = get_avail(chandle);
++				pbk_fill = get_avail(phandle);
++				if (pbk_fill >= 0)
++					pbk_fill = playback_buffer_size - pbk_fill;
++				if (cap_avail > cap_avail_max)
++					cap_avail_max = cap_avail;
++				if (pbk_fill >= 0 && pbk_fill < pbk_fill_min)
++					pbk_fill_min = pbk_fill;
++				if (realtime_check) {
++					long long diff = timestamp_diff_micro(&tstamp_start);
++					long long cap_pos = frames_to_micro(frames_in + cap_avail);
++					long long pbk_pos = frames_to_micro(frames_out - pbk_fill);
++					printf("POS: p=%zd (min=%zd, rt=%lldus) c=%zd (max=%zd, rt=%lldus)\n",
++							pbk_fill, pbk_fill_min, pbk_pos - diff,
++							cap_avail, cap_avail_max, cap_pos - diff);
++				} else if (pos_dump) {
++					printf("POS: p=%zd (min=%zd), c=%zd (max=%zd)\n",
++							pbk_fill, pbk_fill_min, cap_avail, cap_avail_max);
++				}
++			}
++			if ((r = readbuf(chandle, buffer, cap_avail, &frames_in, &in_max)) < 0)
+ 				ok = 0;
+ 			else {
+ 				if (effect)
+-					applyeffect(buffer,r);
++					applyeffect(buffer, r);
+ 			 	if (writebuf(phandle, buffer, r, &frames_out) < 0)
+ 					ok = 0;
+ 			}
+@@ -677,6 +804,13 @@ int main(int argc, char *argv[])
+ 		if (p_tstamp.tv_sec == c_tstamp.tv_sec &&
+ 		    p_tstamp.tv_usec == c_tstamp.tv_usec)
+ 			printf("Hardware sync\n");
++		if (realtime_check) {
++			long long diff = timestamp_diff_micro(&tstamp_start);
++			long long mtime = frames_to_micro(frames_in);
++			printf("Elapsed real time: %lldus\n", diff);
++			printf("Elapsed device time: %lldus\n", mtime);
++			printf("Test time diff (device - real): %lldus\n", mtime - diff);
++		}
+ 		snd_pcm_drop(chandle);
+ 		snd_pcm_nonblock(phandle, 0);
+ 		snd_pcm_drain(phandle);
+@@ -698,5 +832,10 @@ int main(int argc, char *argv[])
+ 	}
+ 	snd_pcm_close(phandle);
+ 	snd_pcm_close(chandle);
++	snd_output_close(output);
++	snd_config_update_free_global();
++	free(buffer);
++	free(pdevice);
++	free(cdevice);
+ 	return 0;
+ }
+-- 
+2.39.0
+
+
+From a0836e2af1f2c37b66e723d8caf399e80b76825b Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Mon, 14 Nov 2022 21:26:39 +0100
+Subject: [PATCH 09/20] latency: add timestamps to the POS lines
+
+- remove first capture pos line
+- measure the snd_pcm_start() call, too
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ test/latency.c | 17 ++++++-----------
+ 1 file changed, 6 insertions(+), 11 deletions(-)
+
+diff --git a/test/latency.c b/test/latency.c
+index 91bef1a1..3aff37c1 100644
+--- a/test/latency.c
++++ b/test/latency.c
+@@ -556,7 +556,7 @@ int main(int argc, char *argv[])
+ 	snd_pcm_t *phandle, *chandle;
+ 	char *buffer;
+ 	int err, latency, morehelp;
+-	int ok, first_avail;
++	int ok;
+ 	snd_timestamp_t p_tstamp, c_tstamp;
+ 	ssize_t r, cap_avail, cap_avail_max, pbk_fill, pbk_fill_min;
+ 	size_t frames_in, frames_out, in_max;
+@@ -723,12 +723,14 @@ int main(int argc, char *argv[])
+ 			break;
+ 		}
+ 
++		if (realtime_check)
++			timestamp_now(&tstamp_start);
+ 		if ((err = snd_pcm_start(chandle)) < 0) {
+ 			printf("Go error: %s\n", snd_strerror(err));
+ 			exit(0);
+ 		}
+ 		if (realtime_check)
+-			timestamp_now(&tstamp_start);
++			printf("[%lldus] Stream start\n", timestamp_diff_micro(&tstamp_start));
+ 		gettimestamp(phandle, &p_tstamp);
+ 		gettimestamp(chandle, &c_tstamp);
+ #if 0
+@@ -740,7 +742,6 @@ int main(int argc, char *argv[])
+ 
+ 		ok = 1;
+ 		in_max = 0;
+-		first_avail = 1;
+ 		while (ok && frames_in < loop_limit) {
+ 			cap_avail = latency;
+ 			if (sys_latency > 0) {
+@@ -751,12 +752,6 @@ int main(int argc, char *argv[])
+ 					ok = 0;
+ 					break;
+ 				}
+-				if (first_avail && realtime_check) {
+-					long long diff = timestamp_diff_micro(&tstamp_start);
+-					long long pos = frames_to_micro(cap_avail);
+-					printf("POS FIRST CHECK: c=%zd (rt=%lldus)\n", cap_avail, pos - diff);
+-					first_avail = 0;
+-				}
+ 			} else if (use_poll) {
+ 				/* use poll to wait for next event */
+ 				snd_pcm_wait(chandle, 1000);
+@@ -775,8 +770,8 @@ int main(int argc, char *argv[])
+ 					long long diff = timestamp_diff_micro(&tstamp_start);
+ 					long long cap_pos = frames_to_micro(frames_in + cap_avail);
+ 					long long pbk_pos = frames_to_micro(frames_out - pbk_fill);
+-					printf("POS: p=%zd (min=%zd, rt=%lldus) c=%zd (max=%zd, rt=%lldus)\n",
+-							pbk_fill, pbk_fill_min, pbk_pos - diff,
++					printf("[%lldus] POS: p=%zd (min=%zd, rt=%lldus) c=%zd (max=%zd, rt=%lldus)\n",
++							diff, pbk_fill, pbk_fill_min, pbk_pos - diff,
+ 							cap_avail, cap_avail_max, cap_pos - diff);
+ 				} else if (pos_dump) {
+ 					printf("POS: p=%zd (min=%zd), c=%zd (max=%zd)\n",
+-- 
+2.39.0
+
+
+From 8b64f22459b6c55ec54f985f35ff701e18800616 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Tue, 15 Nov 2022 17:25:59 +0100
+Subject: [PATCH 10/20] ucm: clarify set_defaults calls
+
+- do full reset in snd_use_case_mgr_reload
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/ucm/main.c | 36 +++++++++++++++++++++++++-----------
+ 1 file changed, 25 insertions(+), 11 deletions(-)
+
+diff --git a/src/ucm/main.c b/src/ucm/main.c
+index 28c60565..4f36648c 100644
+--- a/src/ucm/main.c
++++ b/src/ucm/main.c
+@@ -998,13 +998,14 @@ static int add_auto_values(snd_use_case_mgr_t *uc_mgr)
+ /**
+  * \brief execute default commands
+  * \param uc_mgr Use case manager
++ * \param force Force run
+  * \return zero on success, otherwise a negative error code
+  */
+-static int set_defaults(snd_use_case_mgr_t *uc_mgr)
++static int set_defaults(snd_use_case_mgr_t *uc_mgr, bool force)
+ {
+ 	int err;
+ 
+-	if (uc_mgr->default_list_executed)
++	if (!force && uc_mgr->default_list_executed)
+ 		return 0;
+ 	err = execute_sequence(uc_mgr, NULL, &uc_mgr->default_list,
+ 			       &uc_mgr->value_list, NULL, NULL);
+@@ -1351,7 +1352,7 @@ static int set_verb(snd_use_case_mgr_t *uc_mgr,
+ 	int err;
+ 
+ 	if (enable) {
+-		err = set_defaults(uc_mgr);
++		err = set_defaults(uc_mgr, false);
+ 		if (err < 0)
+ 			return err;
+ 		seq = &verb->enable_list;
+@@ -1435,6 +1436,22 @@ static int set_device(snd_use_case_mgr_t *uc_mgr,
+ 	return err;
+ }
+ 
++/**
++ * \brief Do the full reset
++ * \param uc_mgr Use case manager
++ * \return zero on success, otherwise a negative error code
++ */
++static int do_reset(snd_use_case_mgr_t *uc_mgr)
++{
++	int err;
++
++	err = set_defaults(uc_mgr, true);
++	INIT_LIST_HEAD(&uc_mgr->active_modifiers);
++	INIT_LIST_HEAD(&uc_mgr->active_devices);
++	uc_mgr->active_verb = NULL;
++	return err;
++}
++
+ /**
+  * \brief Parse open arguments
+  * \param uc_mgr Use case manager
+@@ -1569,6 +1586,8 @@ int snd_use_case_mgr_reload(snd_use_case_mgr_t *uc_mgr)
+ 
+ 	pthread_mutex_lock(&uc_mgr->mutex);
+ 
++	do_reset(uc_mgr);
++
+ 	uc_mgr_free_verb(uc_mgr);
+ 
+ 	uc_mgr->default_list_executed = 0;
+@@ -1633,8 +1652,7 @@ static int dismantle_use_case(snd_use_case_mgr_t *uc_mgr)
+ 	}
+ 	uc_mgr->active_verb = NULL;
+ 
+-	err = execute_sequence(uc_mgr, NULL, &uc_mgr->default_list,
+-			       &uc_mgr->value_list, NULL, NULL);
++	err = set_defaults(uc_mgr, true);
+ 	
+ 	return err;
+ }
+@@ -1649,11 +1667,7 @@ int snd_use_case_mgr_reset(snd_use_case_mgr_t *uc_mgr)
+ 	int err;
+ 
+ 	pthread_mutex_lock(&uc_mgr->mutex);
+-	err = execute_sequence(uc_mgr, NULL, &uc_mgr->default_list,
+-			       &uc_mgr->value_list, NULL, NULL);
+-	INIT_LIST_HEAD(&uc_mgr->active_modifiers);
+-	INIT_LIST_HEAD(&uc_mgr->active_devices);
+-	uc_mgr->active_verb = NULL;
++	err = do_reset(uc_mgr);
+ 	pthread_mutex_unlock(&uc_mgr->mutex);
+ 	return err;
+ }
+@@ -2512,7 +2526,7 @@ static int set_defaults_user(snd_use_case_mgr_t *uc_mgr,
+ 		uc_error("error: wrong value for _defaults (%s)", value);
+ 		return -EINVAL;
+ 	}
+-	return set_defaults(uc_mgr);
++	return set_defaults(uc_mgr, false);
+ }
+ 
+ static int handle_transition_verb(snd_use_case_mgr_t *uc_mgr,
+-- 
+2.39.0
+
+
+From 9649b64c6f72984c53f469dad8dd4221d307e06d Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Tue, 22 Nov 2022 09:59:04 +0100
+Subject: [PATCH 11/20] ucm: handle empty string also for ${env:} substitution
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/ucm/ucm_subs.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/ucm/ucm_subs.c b/src/ucm/ucm_subs.c
+index 2261bdc2..e62290ea 100644
+--- a/src/ucm/ucm_subs.c
++++ b/src/ucm/ucm_subs.c
+@@ -490,7 +490,13 @@ static char *rval_env(snd_use_case_mgr_t *uc_mgr ATTRIBUTE_UNUSED, const char *i
+ {
+ 	char *e;
+ 
+-	e = getenv(id);
++	if (*id == '-') {
++		e = getenv(id + 1);
++		if (e == NULL)
++			e = "";
++	} else {
++		e = getenv(id);
++	}
+ 	if (e)
+ 		return strdup(e);
+ 	return NULL;
+-- 
+2.39.0
+
+
+From f0f054517c05ff4ef7a1615851a686a3a202b9ff Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 23 Nov 2022 17:56:20 +0100
+Subject: [PATCH 12/20] test: latency - add -y option (I/O usleep)
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ test/latency.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/test/latency.c b/test/latency.c
+index 3aff37c1..161d1f68 100644
+--- a/test/latency.c
++++ b/test/latency.c
+@@ -52,6 +52,7 @@ int latency_max = 2048;		/* in frames / 2 */
+ int loop_sec = 30;		/* seconds */
+ int block = 0;			/* block mode */
+ int use_poll = 0;
++int usleep_val = 0;
+ int resample = 1;
+ int sys_latency = 0;		/* data I/O: use system timings instead driver wakeups */
+ int pos_dump = 0;		/* dump positions */
+@@ -509,6 +510,8 @@ void help(void)
+ "-s,--seconds   duration of test in seconds\n"
+ "-b,--block     block mode\n"
+ "-p,--poll      use poll (wait for event - reduces CPU usage)\n"
++"-y,--usleep    sleep for the specified amount of microseconds between\n"
++"               stream updates (default 0 - off)\n"
+ "-e,--effect    apply an effect (bandpass filter sweep)\n"
+ "-x,--posdump   dump buffer positions\n"
+ "-X,--realtime  do a realtime check (buffering)\n"
+@@ -548,6 +551,7 @@ int main(int argc, char *argv[])
+ 		{"seconds", 1, NULL, 's'},
+ 		{"block", 0, NULL, 'b'},
+ 		{"poll", 0, NULL, 'p'},
++		{"usleep", 1, NULL, 'y'},
+ 		{"effect", 0, NULL, 'e'},
+ 		{"posdump", 0, NULL, 'x'},
+ 		{"realtime", 0, NULL, 'X'},
+@@ -565,7 +569,7 @@ int main(int argc, char *argv[])
+ 	morehelp = 0;
+ 	while (1) {
+ 		int c;
+-		if ((c = getopt_long(argc, argv, "hP:C:m:M:U:F:f:c:r:B:E:s:bpenxX", long_option, NULL)) < 0)
++		if ((c = getopt_long(argc, argv, "hP:C:m:M:U:F:f:c:r:B:E:s:y:bpenxX", long_option, NULL)) < 0)
+ 			break;
+ 		switch (c) {
+ 		case 'h':
+@@ -624,6 +628,9 @@ int main(int argc, char *argv[])
+ 		case 'p':
+ 			use_poll = 1;
+ 			break;
++		case 'y':
++			usleep_val = atoi(optarg);
++			break;
+ 		case 'e':
+ 			effect = 1;
+ 			break;
+@@ -671,6 +678,8 @@ int main(int argc, char *argv[])
+ 			loop_limit, latency_min * 2, latency_max * 2);
+ 	if (sys_latency > 0)
+ 		printf(", I/O updates %ims", sys_latency);
++	else if (!block)
++		printf(", I/O usleep %ius", usleep_val);
+ 	printf("\n");
+ 
+ 	if ((err = snd_pcm_open(&phandle, pdevice, SND_PCM_STREAM_PLAYBACK, block ? 0 : SND_PCM_NONBLOCK)) < 0) {
+@@ -755,6 +764,8 @@ int main(int argc, char *argv[])
+ 			} else if (use_poll) {
+ 				/* use poll to wait for next event */
+ 				snd_pcm_wait(chandle, 1000);
++			} else if (usleep_val > 0) {
++				usleep(usleep_val);
+ 			}
+ 			if (pos_dump || realtime_check) {
+ 				if (sys_latency <= 0)
+-- 
+2.39.0
+
+
+From 536c93928bc57d941a7cd146dbcbd62df0be2d83 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 23 Nov 2022 19:45:15 +0100
+Subject: [PATCH 13/20] test: latency - usleep should not be used in the block
+ mode
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ test/latency.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/test/latency.c b/test/latency.c
+index 161d1f68..1b4848d6 100644
+--- a/test/latency.c
++++ b/test/latency.c
+@@ -678,7 +678,7 @@ int main(int argc, char *argv[])
+ 			loop_limit, latency_min * 2, latency_max * 2);
+ 	if (sys_latency > 0)
+ 		printf(", I/O updates %ims", sys_latency);
+-	else if (!block)
++	else if (!block && !use_poll)
+ 		printf(", I/O usleep %ius", usleep_val);
+ 	printf("\n");
+ 
+@@ -764,7 +764,7 @@ int main(int argc, char *argv[])
+ 			} else if (use_poll) {
+ 				/* use poll to wait for next event */
+ 				snd_pcm_wait(chandle, 1000);
+-			} else if (usleep_val > 0) {
++			} else if (!block && usleep_val > 0) {
+ 				usleep(usleep_val);
+ 			}
+ 			if (pos_dump || realtime_check) {
+-- 
+2.39.0
+
+
+From ea0850f3f3780652869c2b4550576894bc21684f Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Thu, 24 Nov 2022 08:33:47 +0100
+Subject: [PATCH 14/20] test: latency - add --policy option to allow using
+ SCHED_FIFO
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ test/latency.c | 22 +++++++++++++++++-----
+ 1 file changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/test/latency.c b/test/latency.c
+index 1b4848d6..3b20e1c1 100644
+--- a/test/latency.c
++++ b/test/latency.c
+@@ -40,6 +40,7 @@
+ 
+ typedef struct timespec timestamp_t;
+ 
++char *sched_policy = "rr";
+ char *pdevice = "hw:0,0";
+ char *cdevice = "hw:0,0";
+ snd_pcm_format_t format = SND_PCM_FORMAT_S16_LE;
+@@ -354,18 +355,24 @@ void gettimestamp(snd_pcm_t *handle, snd_timestamp_t *timestamp)
+ void setscheduler(void)
+ {
+ 	struct sched_param sched_param;
++	int policy = SCHED_RR;
++	const char *spolicy = "Round Robin";
+ 
++	if (strcasecmp(sched_policy, "fifo") == 0) {
++		policy = SCHED_FIFO;
++		spolicy = "FIFO";
++	}
+ 	if (sched_getparam(0, &sched_param) < 0) {
+ 		printf("Scheduler getparam failed...\n");
+ 		return;
+ 	}
+-	sched_param.sched_priority = sched_get_priority_max(SCHED_RR);
+-	if (!sched_setscheduler(0, SCHED_RR, &sched_param)) {
+-		printf("Scheduler set to Round Robin with priority %i...\n", sched_param.sched_priority);
++	sched_param.sched_priority = sched_get_priority_max(policy);
++	if (!sched_setscheduler(0, policy, &sched_param)) {
++		printf("Scheduler set to %s with priority %i...\n", spolicy, sched_param.sched_priority);
+ 		fflush(stdout);
+ 		return;
+ 	}
+-	printf("!!!Scheduler set to Round Robin with priority %i FAILED!!!\n", sched_param.sched_priority);
++	printf("!!!Scheduler set to %s with priority %i FAILED!!!\n", spolicy, sched_param.sched_priority);
+ }
+ 
+ long timediff(snd_timestamp_t t1, snd_timestamp_t t2)
+@@ -515,6 +522,7 @@ void help(void)
+ "-e,--effect    apply an effect (bandpass filter sweep)\n"
+ "-x,--posdump   dump buffer positions\n"
+ "-X,--realtime  do a realtime check (buffering)\n"
++"-O,--policy    set scheduler policy (RR or FIFO)\n"
+ );
+         printf("Recognized sample formats are:");
+         for (k = 0; k < SND_PCM_FORMAT_LAST; ++k) {
+@@ -555,6 +563,7 @@ int main(int argc, char *argv[])
+ 		{"effect", 0, NULL, 'e'},
+ 		{"posdump", 0, NULL, 'x'},
+ 		{"realtime", 0, NULL, 'X'},
++		{"policy", 1, NULL, 'O'},
+ 		{NULL, 0, NULL, 0},
+ 	};
+ 	snd_pcm_t *phandle, *chandle;
+@@ -569,7 +578,7 @@ int main(int argc, char *argv[])
+ 	morehelp = 0;
+ 	while (1) {
+ 		int c;
+-		if ((c = getopt_long(argc, argv, "hP:C:m:M:U:F:f:c:r:B:E:s:y:bpenxX", long_option, NULL)) < 0)
++		if ((c = getopt_long(argc, argv, "hP:C:m:M:U:F:f:c:r:B:E:s:y:O:bpenxX", long_option, NULL)) < 0)
+ 			break;
+ 		switch (c) {
+ 		case 'h':
+@@ -643,6 +652,9 @@ int main(int argc, char *argv[])
+ 		case 'X':
+ 			realtime_check = 1;
+ 			break;
++		case 'O':
++			sched_policy = optarg;
++			break;
+ 		}
+ 	}
+ 
+-- 
+2.39.0
+
+
+From 75f8e2e73e03f628a4f2ba55ca8aa3e9f50cdbd9 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Thu, 24 Nov 2022 10:55:32 +0100
+Subject: [PATCH 15/20] test: latency - --policy option - allow using
+ SCHED_OTHER
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ test/latency.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/test/latency.c b/test/latency.c
+index 3b20e1c1..5e67015c 100644
+--- a/test/latency.c
++++ b/test/latency.c
+@@ -361,6 +361,9 @@ void setscheduler(void)
+ 	if (strcasecmp(sched_policy, "fifo") == 0) {
+ 		policy = SCHED_FIFO;
+ 		spolicy = "FIFO";
++	} else if (strcasecmp(sched_policy, "other") == 0) {
++		policy = SCHED_OTHER;
++		spolicy = "OTHER";
+ 	}
+ 	if (sched_getparam(0, &sched_param) < 0) {
+ 		printf("Scheduler getparam failed...\n");
+@@ -522,7 +525,7 @@ void help(void)
+ "-e,--effect    apply an effect (bandpass filter sweep)\n"
+ "-x,--posdump   dump buffer positions\n"
+ "-X,--realtime  do a realtime check (buffering)\n"
+-"-O,--policy    set scheduler policy (RR or FIFO)\n"
++"-O,--policy    set scheduler policy (RR, FIFO or OTHER)\n"
+ );
+         printf("Recognized sample formats are:");
+         for (k = 0; k < SND_PCM_FORMAT_LAST; ++k) {
+-- 
+2.39.0
+
+
+From d28e8cb29485cc93f741b01dc65893c798359963 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Tue, 29 Nov 2022 19:42:13 +0100
+Subject: [PATCH 16/20] topology: ctl - remove the wrong (debug) code
+
+This code was commited by mistake. It was used for testing
+of ALSA_PCM_OLD_HW/SW_PARAMS_API.
+
+BugLink: https://github.com/thesofproject/sof/issues/6667
+Related-to: 78b20e3c ("test: latency - use snd_pcm_format_physical_width()")
+Reported-by: Jaska Uimonen <jaska.uimonen@linux.intel.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/topology/ctl.c | 7 +------
+ 1 file changed, 1 insertion(+), 6 deletions(-)
+
+diff --git a/src/topology/ctl.c b/src/topology/ctl.c
+index 2c500ffc..dd05424d 100644
+--- a/src/topology/ctl.c
++++ b/src/topology/ctl.c
+@@ -17,13 +17,9 @@
+            Liam Girdwood <liam.r.girdwood@linux.intel.com>
+ */
+ 
+-#define ALSA_PCM_OLD_HW_PARAMS_API 1
+-#define ALSA_PCM_OLD_SW_PARAMS_API 1
+-#include "../../include/asoundlib.h"
+ #include "list.h"
+ #include "tplg_local.h"
+ 
+-
+ #define ENUM_VAL_SIZE 	(SNDRV_CTL_ELEM_ID_NAME_MAXLEN >> 2)
+ 
+ struct ctl_access_elem {
+@@ -75,8 +71,7 @@ static int parse_access_values(snd_config_t *cfg,
+ 			}
+ 		}
+ 	}
+-	return snd_pcm_hw_params_get_channels(NULL);
+-	//return snd_pcm_hw_params_get_access(NULL);
++
+ 	return 0;
+ }
+ 
+-- 
+2.39.0
+
+
+From e29413a2205099b2bffe584210d7a2b59f531f90 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 7 Dec 2022 14:49:48 +0100
+Subject: [PATCH 17/20] ucm: execute_sysw - fix possible use-after-free
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/ucm/main.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/ucm/main.c b/src/ucm/main.c
+index 4f36648c..2ff4d3f3 100644
+--- a/src/ucm/main.c
++++ b/src/ucm/main.c
+@@ -572,16 +572,17 @@ static int execute_sysw(const char *sysw)
+ 	wlen = write(fd, value, len);
+ 	myerrno = errno;
+ 	close(fd);
+-	free(s);
+ 
+ 	if (ignore_error)
+-		return 0;
++		goto __end;
+ 
+ 	if (wlen != (ssize_t)len) {
+ 		uc_error("unable to write '%s' to '%s': %s", value, path, strerror(myerrno));
+ 		return -EINVAL;
+ 	}
+ 
++__end:
++	free(s);
+ 	return 0;
+ }
+ 
+-- 
+2.39.0
+
+
+From 13e31fb1ecd5f666ffda09e87ef1aa53b4fae022 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 7 Dec 2022 14:54:30 +0100
+Subject: [PATCH 18/20] alsa-lib: conf - fix possible use-after-free in
+ get_char_skip_comments
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/conf.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/conf.c b/src/conf.c
+index eb38c344..65f2e1a7 100644
+--- a/src/conf.c
++++ b/src/conf.c
+@@ -814,11 +814,12 @@ static int get_char_skip_comments(input_t *input)
+ 				closedir(dirp);
+ 
+ 				err = add_include_path(input->current, str);
+-				free(str);
+ 				if (err < 0) {
+ 					SNDERR("Cannot add search dir %s", str);
++					free(str);
+ 					return err;
+ 				}
++				free(str);
+ 				continue;
+ 			}
+ 
+-- 
+2.39.0
+
+
+From 9f2c68cef716aa45942b502a42d94b84289f23bc Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Tue, 13 Dec 2022 10:31:32 +0100
+Subject: [PATCH 19/20] pcm: route/softvol use snd_config_get_ireal vs get_real
+ to handle also integers
+
+Link: https://lore.kernel.org/alsa-devel/f9a7ad6a256d4ad7a31642dcf875d436@axis.com/
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/pcm/pcm_route.c   | 11 +++--------
+ src/pcm/pcm_softvol.c |  4 ++--
+ 2 files changed, 5 insertions(+), 10 deletions(-)
+
+diff --git a/src/pcm/pcm_route.c b/src/pcm/pcm_route.c
+index d3e5f3ff..21b869cc 100644
+--- a/src/pcm/pcm_route.c
++++ b/src/pcm/pcm_route.c
+@@ -1182,15 +1182,10 @@ static int _snd_pcm_route_load_ttable(snd_config_t *tt, snd_pcm_route_ttable_ent
+ 				return -EINVAL;
+ 			}
+ 
+-			err = snd_config_get_real(jnode, &value);
++			err = snd_config_get_ireal(jnode, &value);
+ 			if (err < 0) {
+-				long v;
+-				err = snd_config_get_integer(jnode, &v);
+-				if (err < 0) {
+-					SNDERR("Invalid type for %s", id);
+-					return -EINVAL;
+-				}
+-				value = v;
++				SNDERR("Invalid type for %s", id);
++				return -EINVAL;
+ 			}
+ 
+ 			for (k = 0; (int) k < ss; k++) {
+diff --git a/src/pcm/pcm_softvol.c b/src/pcm/pcm_softvol.c
+index 99d0d32e..3e3dbc79 100644
+--- a/src/pcm/pcm_softvol.c
++++ b/src/pcm/pcm_softvol.c
+@@ -1190,7 +1190,7 @@ int _snd_pcm_softvol_open(snd_pcm_t **pcmp, const char *name,
+ 			continue;
+ 		}
+ 		if (strcmp(id, "min_dB") == 0) {
+-			err = snd_config_get_real(n, &min_dB);
++			err = snd_config_get_ireal(n, &min_dB);
+ 			if (err < 0) {
+ 				SNDERR("Invalid min_dB value");
+ 				return err;
+@@ -1198,7 +1198,7 @@ int _snd_pcm_softvol_open(snd_pcm_t **pcmp, const char *name,
+ 			continue;
+ 		}
+ 		if (strcmp(id, "max_dB") == 0) {
+-			err = snd_config_get_real(n, &max_dB);
++			err = snd_config_get_ireal(n, &max_dB);
+ 			if (err < 0) {
+ 				SNDERR("Invalid max_dB value");
+ 				return err;
+-- 
+2.39.0
+
+
+From 2e82060ebcd68f5ea1fe3dccc5a6518008132a54 Mon Sep 17 00:00:00 2001
+From: Alan Young <consult.awy@gmail.com>
+Date: Fri, 30 Dec 2022 16:48:14 +0000
+Subject: [PATCH 20/20] pcm: rate: fix last_commit_ptr boundary wrapping
+
+Wrap last_commit_ptr using boundary. Was just wrapped to 0, which is
+correct only if the buffer size, and hence the boundary, is an integer
+multiple of the period size.
+
+Fixes: 467d69c5bc1 ("Fix CPU hog with combination of rate plugin")
+Fixes: 29041c52207 ("fix infinite draining of the rate plugin in SND_PCM_NONBLOCK mode")
+Link: https://lore.kernel.org/alsa-devel/20221230164814.901457-1-consult.awy@gmail.com/
+Signed-off-by: Alan Young <consult.awy@gmail.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/pcm/pcm_rate.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/pcm/pcm_rate.c b/src/pcm/pcm_rate.c
+index e5d8eddd..c8076859 100644
+--- a/src/pcm/pcm_rate.c
++++ b/src/pcm/pcm_rate.c
+@@ -1018,7 +1018,7 @@ static int snd_pcm_rate_sync_playback_area(snd_pcm_t *pcm, snd_pcm_uframes_t app
+ 		slave_size -= rate->gen.slave->period_size;
+ 		rate->last_commit_ptr += pcm->period_size;
+ 		if (rate->last_commit_ptr >= pcm->boundary)
+-			rate->last_commit_ptr = 0;
++			rate->last_commit_ptr -= pcm->boundary;
+ 	}
+ 	return 0;
+ }
+@@ -1163,7 +1163,7 @@ static int snd_pcm_rate_drain(snd_pcm_t *pcm)
+ 			if (commit_err == 1) {
+ 				rate->last_commit_ptr += psize;
+ 				if (rate->last_commit_ptr >= pcm->boundary)
+-					rate->last_commit_ptr = 0;
++					rate->last_commit_ptr -= pcm->boundary;
+ 			} else if (commit_err == 0) {
+ 				if (pcm->mode & SND_PCM_NONBLOCK) {
+ 					commit_err = -EAGAIN;
+-- 
+2.39.0
+
