@@ -2,8 +2,8 @@
 #define  prever_dot .rc3
 #define  postver    a
 
-%define version_alsa_lib  1.2.8
-%define version_alsa_ucm  1.2.8
+%define version_alsa_lib  1.2.9
+%define version_alsa_ucm  1.2.9
 %define version_alsa_tplg 1.2.5
 
 %if 0%{?rhel}
@@ -13,7 +13,7 @@
 Summary:  The Advanced Linux Sound Architecture (ALSA) library
 Name:     alsa-lib
 Version:  %{version_alsa_lib}
-Release:  2%{?prever_dot}%{?dist}
+Release:  1%{?prever_dot}%{?dist}
 License:  LGPLv2+
 Group:    System Environment/Libraries
 URL:      http://www.alsa-project.org/
@@ -177,6 +177,9 @@ rm %{buildroot}/%{_includedir}/asoundlib.h
 %endif
 
 %changelog
+* Mon May 15 2023 Jaroslav Kysela <perex@perex.cz> - 1.2.9-1
+- update to alsa-lib 1.2.9 and alsa-ucm-conf 1.2.9
+
 * Thu Jan  5 2023 Jaroslav Kysela <perex@perex.cz> - 1.2.8-2
 - update to alsa-lib 1.2.8 and alsa-ucm-conf 1.2.8
 - remove alsa-topology package for rhel
