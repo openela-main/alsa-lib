@@ -1,0 +1,533 @@
+From 9685505bf438467d9b11919b332b066d3a1c94d0 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Mon, 4 Sep 2023 09:37:29 +0200
+Subject: [PATCH 1/6] gitcompile: Add static build
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ gitcompile | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/gitcompile b/gitcompile
+index 0fe092ce..c70448f7 100755
+--- a/gitcompile
++++ b/gitcompile
+@@ -32,6 +32,10 @@ if [ $# -ne 0 ]; then
+       lto="-flto -flto-partition=none"
+       echo "Forced lto build..."
+       shift ;;
++    static)
++      static=yes
++      echo "Selected static build..."
++      shift ;;
+     *)
+       endloop=yes
+       ;;
+@@ -75,6 +79,12 @@ if [ "$python2" = "yes" ]; then
+   args="$args --enable-python2"
+ fi
+ 
++if [ "$static" = "yes" ]; then
++  #args="$args --enable-shared=no --enable-static=yes"
++  args="$args --disable-shared"
++fi
++
++
+ touch ltconfig
+ libtoolize --force --copy --automake
+ aclocal $ACLOCAL_FLAGS
+-- 
+2.41.0
+
+
+From fcce13a6726c52882bd8b7131c61c4eba308792c Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Mon, 4 Sep 2023 09:38:26 +0200
+Subject: [PATCH 2/6] control.h: Fix ump header file detection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Apparently, the control.h is used from apps separately (outside
+asoundlib.h). Avoid errors like:
+
+/usr/include/alsa/control.h:417:47: error: ‘snd_ump_endpoint_info_t’ has not been declared
+  417 | int snd_ctl_ump_endpoint_info(snd_ctl_t *ctl, snd_ump_endpoint_info_t *info);
+      |                                               ^~~~~~~~~~~~~~~~~~~~~~~
+/usr/include/alsa/control.h:418:44: error: ‘snd_ump_block_info_t’ has not been declared
+  418 | int snd_ctl_ump_block_info(snd_ctl_t *ctl, snd_ump_block_info_t *info);
+      |                                            ^~~~~~~~~~~~~~~~~~~~
+
+Fixes: https://github.com/alsa-project/alsa-lib/issues/348
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ include/control.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/include/control.h b/include/control.h
+index ab482ba4..e7541d56 100644
+--- a/include/control.h
++++ b/include/control.h
+@@ -413,6 +413,8 @@ int snd_ctl_pcm_prefer_subdevice(snd_ctl_t *ctl, int subdev);
+ int snd_ctl_rawmidi_next_device(snd_ctl_t *ctl, int * device);
+ int snd_ctl_rawmidi_info(snd_ctl_t *ctl, snd_rawmidi_info_t * info);
+ int snd_ctl_rawmidi_prefer_subdevice(snd_ctl_t *ctl, int subdev);
++#endif
++#ifdef __ALSA_UMP_H
+ int snd_ctl_ump_next_device(snd_ctl_t *ctl, int *device);
+ int snd_ctl_ump_endpoint_info(snd_ctl_t *ctl, snd_ump_endpoint_info_t *info);
+ int snd_ctl_ump_block_info(snd_ctl_t *ctl, snd_ump_block_info_t *info);
+-- 
+2.41.0
+
+
+From 10bd599970acc71c92f85eb08943eb8d3d702a9c Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 6 Sep 2023 15:16:44 +0200
+Subject: [PATCH 3/6] global.h: move __STRING() macro outside !PIC ifdef block
+
+It solves the musl libc compilation issue.
+
+control.c: In function 'snd_ctl_open_conf':
+../../include/global.h:98:36: warning: implicit declaration of function '__STRING' [-Wimplicit-function-declaratio]
+   98 | #define SND_DLSYM_VERSION(version) __STRING(version)
+      |                                    ^~~~~~~~
+
+Fixes: https://github.com/alsa-project/alsa-lib/issues/350
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ include/global.h | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/include/global.h b/include/global.h
+index dfe9bc2b..3ecaeee8 100644
+--- a/include/global.h
++++ b/include/global.h
+@@ -51,6 +51,11 @@ const char *snd_asoundlib_version(void);
+ #define ATTRIBUTE_UNUSED __attribute__ ((__unused__))
+ #endif
+ 
++#ifndef __STRING
++/** \brief Return 'x' argument as string */
++#define __STRING(x)     #x
++#endif
++
+ #ifdef PIC /* dynamic build */
+ 
+ /** \hideinitializer \brief Helper macro for #SND_DLSYM_BUILD_VERSION. */
+@@ -71,11 +76,6 @@ struct snd_dlsym_link {
+ 
+ extern struct snd_dlsym_link *snd_dlsym_start;
+ 
+-#ifndef __STRING
+-/** \brief Return 'x' argument as string */
+-#define __STRING(x)     #x
+-#endif
+-
+ /** \hideinitializer \brief Helper macro for #SND_DLSYM_BUILD_VERSION. */
+ #define __SND_DLSYM_VERSION(prefix, name, version) _ ## prefix ## name ## version
+ /**
+-- 
+2.41.0
+
+
+From 0e3dfb9f705ca78be34cd70fd59d67c431e29cc7 Mon Sep 17 00:00:00 2001
+From: Takashi Iwai <tiwai@suse.de>
+Date: Sat, 9 Sep 2023 17:42:03 +0200
+Subject: [PATCH 4/6] pcm: Fix segfault with 32bit libs
+
+The recent rearrangement of header inclusion order caused a regression
+showing segfaults on 32bit Arm.  The primary reason is the
+inconsistent compile condition depending on the inclusion of config.h;
+while most of other code include pcm_local.h (that implicitly includes
+config.h) at first, pcm_direct.c doesn't do it, hence the access with
+direct plugins crashes.
+
+For fixing it, we need to include config.h at the beginning.  But,
+it's better to include pcm_local.h for all relevant code for
+consistency.  The patch does it, and also it adds the guard in
+pcm_local.h for double inclusions.
+
+Fixes: ad3a8b8b314e ("reshuffle included files to include config.h as first")
+Link: https://github.com/alsa-project/alsa-lib/issues/352
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+---
+ src/pcm/pcm_direct.c | 1 +
+ src/pcm/pcm_dmix.c   | 2 +-
+ src/pcm/pcm_dshare.c | 1 +
+ src/pcm/pcm_dsnoop.c | 1 +
+ src/pcm/pcm_local.h  | 5 +++++
+ src/pcm/pcm_shm.c    | 1 +
+ 6 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/pcm/pcm_direct.c b/src/pcm/pcm_direct.c
+index 040fc160..e53e5923 100644
+--- a/src/pcm/pcm_direct.c
++++ b/src/pcm/pcm_direct.c
+@@ -19,6 +19,7 @@
+  *
+  */
+   
++#include "pcm_local.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stddef.h>
+diff --git a/src/pcm/pcm_dmix.c b/src/pcm/pcm_dmix.c
+index 7cd3c508..55cae3e7 100644
+--- a/src/pcm/pcm_dmix.c
++++ b/src/pcm/pcm_dmix.c
+@@ -26,7 +26,7 @@
+  *
+  */
+   
+-#include "config.h"
++#include "pcm_local.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stddef.h>
+diff --git a/src/pcm/pcm_dshare.c b/src/pcm/pcm_dshare.c
+index 454b39a9..c0329098 100644
+--- a/src/pcm/pcm_dshare.c
++++ b/src/pcm/pcm_dshare.c
+@@ -26,6 +26,7 @@
+  *
+  */
+   
++#include "pcm_local.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stddef.h>
+diff --git a/src/pcm/pcm_dsnoop.c b/src/pcm/pcm_dsnoop.c
+index d3ce300c..bf67c68a 100644
+--- a/src/pcm/pcm_dsnoop.c
++++ b/src/pcm/pcm_dsnoop.c
+@@ -26,6 +26,7 @@
+  *
+  */
+   
++#include "pcm_local.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stddef.h>
+diff --git a/src/pcm/pcm_local.h b/src/pcm/pcm_local.h
+index 6a0e71e7..152c92c3 100644
+--- a/src/pcm/pcm_local.h
++++ b/src/pcm/pcm_local.h
+@@ -20,6 +20,9 @@
+  *
+  */
+ 
++#ifndef __PCM_LOCAL_H
++#define __PCM_LOCAL_H
++
+ #include "config.h"
+ 
+ #include <stdio.h>
+@@ -1223,3 +1226,5 @@ static inline void snd_pcm_unlock(snd_pcm_t *pcm)
+ #define snd_pcm_lock(pcm)		do {} while (0)
+ #define snd_pcm_unlock(pcm)		do {} while (0)
+ #endif /* THREAD_SAFE_API */
++
++#endif /* __PCM_LOCAL_H */
+diff --git a/src/pcm/pcm_shm.c b/src/pcm/pcm_shm.c
+index f0bfd934..d9596547 100644
+--- a/src/pcm/pcm_shm.c
++++ b/src/pcm/pcm_shm.c
+@@ -26,6 +26,7 @@
+  *
+  */
+   
++#include "pcm_local.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stddef.h>
+-- 
+2.41.0
+
+
+From 81a7a93636d9472fcb0c2ff32d9bfdf6ed10763d Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 13 Sep 2023 12:27:21 +0200
+Subject: [PATCH 5/6] reshuffle included files to include config.h as first -
+ v2
+
+config.h may contain defines like _FILE_OFFSET_BITS which influence
+the system wide include files (off_t types, open -> open64 function
+usage etc.).
+
+Fixes: ad3a8b8b ("reshuffle included files to include config.h as first")
+Related: https://github.com/alsa-project/alsa-lib/pull/333
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/control/setup.c         | 2 +-
+ src/rawmidi/rawmidi.c       | 2 +-
+ src/rawmidi/rawmidi_local.h | 2 +-
+ src/rawmidi/rawmidi_virt.c  | 4 +---
+ src/rawmidi/ump.c           | 4 ----
+ src/seq/seq.c               | 2 +-
+ src/seq/seq_hw.c            | 2 +-
+ src/seq/seq_local.h         | 2 +-
+ src/seq/seq_midi_event.c    | 2 +-
+ src/seq/seqmid.c            | 4 +---
+ src/userfile.c              | 2 +-
+ 11 files changed, 10 insertions(+), 18 deletions(-)
+
+diff --git a/src/control/setup.c b/src/control/setup.c
+index 88635e42..fb096117 100644
+--- a/src/control/setup.c
++++ b/src/control/setup.c
+@@ -29,13 +29,13 @@
+  *
+  */
+ 
++#include "local.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stdarg.h>
+ #include <unistd.h>
+ #include <string.h>
+ #include <ctype.h>
+-#include "local.h"
+ 
+ #ifndef DOC_HIDDEN
+ typedef struct {
+diff --git a/src/rawmidi/rawmidi.c b/src/rawmidi/rawmidi.c
+index 316f524b..c4b45fa2 100644
+--- a/src/rawmidi/rawmidi.c
++++ b/src/rawmidi/rawmidi.c
+@@ -144,12 +144,12 @@ This example shows open and read/write rawmidi operations.
+  * Shows open and read/write rawmidi operations.
+  */
+  
++#include "rawmidi_local.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stdarg.h>
+ #include <unistd.h>
+ #include <string.h>
+-#include "rawmidi_local.h"
+ 
+ /**
+  * \brief setup the default parameters
+diff --git a/src/rawmidi/rawmidi_local.h b/src/rawmidi/rawmidi_local.h
+index 19dbf725..f0bb06a7 100644
+--- a/src/rawmidi/rawmidi_local.h
++++ b/src/rawmidi/rawmidi_local.h
+@@ -19,10 +19,10 @@
+  *
+  */
+ 
++#include "local.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <limits.h>
+-#include "local.h"
+ 
+ typedef struct {
+ 	int (*close)(snd_rawmidi_t *rawmidi);
+diff --git a/src/rawmidi/rawmidi_virt.c b/src/rawmidi/rawmidi_virt.c
+index 884b8ff8..04c485d3 100644
+--- a/src/rawmidi/rawmidi_virt.c
++++ b/src/rawmidi/rawmidi_virt.c
+@@ -19,13 +19,11 @@
+  *
+  */
+ 
+-#include <stdio.h>
+-#include <stdlib.h>
++#include "rawmidi_local.h"
+ #include <unistd.h>
+ #include <string.h>
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
+-#include "rawmidi_local.h"
+ #include "seq.h"
+ #include "seq_midi_event.h"
+ 
+diff --git a/src/rawmidi/ump.c b/src/rawmidi/ump.c
+index 25fbaff2..39c1c4a9 100644
+--- a/src/rawmidi/ump.c
++++ b/src/rawmidi/ump.c
+@@ -4,10 +4,6 @@
+  * \brief Universal MIDI Protocol (UMP) Interface
+  */
+ 
+-#include <stdio.h>
+-#include <stdlib.h>
+-#include <limits.h>
+-#include "local.h"
+ #include "rawmidi_local.h"
+ #include "ump_local.h"
+ 
+diff --git a/src/seq/seq.c b/src/seq/seq.c
+index 899dfe9f..fd8ca30e 100644
+--- a/src/seq/seq.c
++++ b/src/seq/seq.c
+@@ -777,8 +777,8 @@ void event_filter(snd_seq_t *seq, snd_seq_event_t *ev)
+ 
+ */
+ 
+-#include <poll.h>
+ #include "seq_local.h"
++#include <poll.h>
+ 
+ /****************************************************************************
+  *                                                                          *
+diff --git a/src/seq/seq_hw.c b/src/seq/seq_hw.c
+index a51ebfb6..b74948c8 100644
+--- a/src/seq/seq_hw.c
++++ b/src/seq/seq_hw.c
+@@ -20,9 +20,9 @@
+  *
+  */
+ 
++#include "seq_local.h"
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
+-#include "seq_local.h"
+ 
+ #ifndef PIC
+ /* entry for static linking */
+diff --git a/src/seq/seq_local.h b/src/seq/seq_local.h
+index 9b4a6545..46824806 100644
+--- a/src/seq/seq_local.h
++++ b/src/seq/seq_local.h
+@@ -23,10 +23,10 @@
+ #ifndef __SEQ_LOCAL_H
+ #define __SEQ_LOCAL_H
+ 
++#include "local.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <limits.h>
+-#include "local.h"
+ 
+ #define SND_SEQ_OBUF_SIZE	(16*1024)	/* default size */
+ #define SND_SEQ_IBUF_SIZE	500		/* in event_size aligned */
+diff --git a/src/seq/seq_midi_event.c b/src/seq/seq_midi_event.c
+index df09bde3..95a44e9b 100644
+--- a/src/seq/seq_midi_event.c
++++ b/src/seq/seq_midi_event.c
+@@ -28,10 +28,10 @@
+  *   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+  */
+ 
++#include "local.h"
+ #if HAVE_MALLOC_H
+ #include <malloc.h>
+ #endif
+-#include "local.h"
+ 
+ #ifndef DOC_HIDDEN
+ 
+diff --git a/src/seq/seqmid.c b/src/seq/seqmid.c
+index 55651f38..9ec93ee8 100644
+--- a/src/seq/seqmid.c
++++ b/src/seq/seqmid.c
+@@ -20,14 +20,12 @@
+  *
+  */
+ 
+-#include <stdio.h>
+-#include <stdlib.h>
++#include "seq_local.h"
+ #include <unistd.h>
+ #include <string.h>
+ #include <fcntl.h>
+ #include <ctype.h>
+ #include <sys/ioctl.h>
+-#include "seq_local.h"
+ 
+ /**
+  * \brief queue controls - start/stop/continue
+diff --git a/src/userfile.c b/src/userfile.c
+index 4a740834..492ea9cb 100644
+--- a/src/userfile.c
++++ b/src/userfile.c
+@@ -18,7 +18,7 @@
+  *
+  */
+   
+-#include <config.h>
++#include "config.h"
+ #include <string.h>
+ #include <errno.h>
+ #include <assert.h>
+-- 
+2.41.0
+
+
+From 96f60d829f2c9dc9ad9eda46410adaa41b4b0da0 Mon Sep 17 00:00:00 2001
+From: Takashi Iwai <tiwai@suse.de>
+Date: Tue, 10 Oct 2023 08:20:15 +0200
+Subject: [PATCH 6/6] seq: Fix typos in symbol version definitions
+
+There were obvious typos in src/Versions.in that resulted in the
+undefined symbols.  Correct those entries.
+
+Fixes: 2aefb5c41cc0 ("seq: Add UMP support")
+Closes: https://github.com/alsa-project/alsa-lib/issues/356
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+---
+ src/Versions.in | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/Versions.in b/src/Versions.in
+index c8ac1c82..c53a99fa 100644
+--- a/src/Versions.in
++++ b/src/Versions.in
+@@ -158,13 +158,13 @@ ALSA_1.2.10 {
+     @SYMBOL_PREFIX@snd_ctl_ump_block_info;
+     @SYMBOL_PREFIX@snd_seq_ump_*;
+     @SYMBOL_PREFIX@snd_seq_client_info_get_midi_version;
+-    @SYMBOL_PREFIX@snd_seq_seq_client_info_get_ump_group_enabled;
++    @SYMBOL_PREFIX@snd_seq_client_info_get_ump_group_enabled;
+     @SYMBOL_PREFIX@snd_seq_client_info_get_ump_groupless_enabled;
+-    @SYMBOL_PREFIX@snd_seq_seq_client_get_ump_conversion;
++    @SYMBOL_PREFIX@snd_seq_client_info_get_ump_conversion;
+     @SYMBOL_PREFIX@snd_seq_client_info_set_midi_version;
+-    @SYMBOL_PREFIX@snd_seq_seq_client_info_set_ump_group_enabled;
++    @SYMBOL_PREFIX@snd_seq_client_info_set_ump_group_enabled;
+     @SYMBOL_PREFIX@snd_seq_client_info_set_ump_groupless_enabled;
+-    @SYMBOL_PREFIX@snd_seq_seq_client_set_ump_conversion;
++    @SYMBOL_PREFIX@snd_seq_client_info_set_ump_conversion;
+     @SYMBOL_PREFIX@snd_seq_get_ump_endpoint_info;
+     @SYMBOL_PREFIX@snd_seq_get_ump_block_info;
+     @SYMBOL_PREFIX@snd_seq_set_ump_endpoint_info;
+-- 
+2.41.0
+
+From 915a71a2cdf6361f0fc77fa367a67910dc0288db Mon Sep 17 00:00:00 2001
+From: Takashi Iwai <tiwai@suse.de>
+Date: Sat, 4 Nov 2023 10:05:39 +0100
+Subject: [PATCH] seq: Fix invalid sanity-check in
+ snd_seq_set_input_buffer_size()
+
+snd_seq_set_input_buffer_size() has an assert() call with packet_size,
+but it's still uninitialized at that point.  Fix it with the real
+packet size.
+
+Fixes: 2aefb5c41cc0 ("seq: Add UMP support")
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+---
+ src/seq/seq.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/seq/seq.c b/src/seq/seq.c
+index fd8ca30e..5ec737a7 100644
+--- a/src/seq/seq.c
++++ b/src/seq/seq.c
+@@ -1269,9 +1269,9 @@ int snd_seq_set_input_buffer_size(snd_seq_t *seq, size_t size)
+ 	size_t packet_size;
+ 
+ 	assert(seq && seq->ibuf);
++	packet_size = get_packet_size(seq);
+ 	assert(size >= packet_size);
+ 	snd_seq_drop_input(seq);
+-	packet_size = get_packet_size(seq);
+ 	size = (size + packet_size - 1) / packet_size;
+ 	if (size != seq->ibufsize) {
+ 		char *newbuf;
+-- 
+2.41.0
+

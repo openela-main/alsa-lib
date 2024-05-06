@@ -1,0 +1,1984 @@
+From b68aa52acdd2763fedad5eec0f435fbf43e5ccc6 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Mon, 4 Sep 2023 16:39:52 +0200
+Subject: [PATCH 01/23] SplitPCM: Device argument may not be set
+
+Link: https://github.com/alsa-project/alsa-ucm-conf/issues/346
+Fixes: 10967ea ("SplitPCM: Fix Device variable in SplitPCMDevice macro")
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/common/pcm/split.conf | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ucm2/common/pcm/split.conf b/ucm2/common/pcm/split.conf
+index 80f23e6..9ed2f95 100644
+--- a/ucm2/common/pcm/split.conf
++++ b/ucm2/common/pcm/split.conf
+@@ -326,7 +326,7 @@ DefineMacro.SplitPCMDevice {
+ 	If.0 {
+ 		Condition {
+ 			Type String
+-			Empty "${var:__Device}"
++			Empty "${var:-__Device}"
+ 		}
+ 		True.Define.__Device "0"
+ 	}
+-- 
+2.41.0
+
+
+From 93c36d19e0bedfd4eac0314ffe58266d64f00a1e Mon Sep 17 00:00:00 2001
+From: Srinivas Kandagatla <srinivas.kandagatla@linaro.org>
+Date: Fri, 7 Jul 2023 12:53:09 +0100
+Subject: [PATCH 02/23] ucm2: codecs: wcd938x: use Analog volume for HeadPhones
+
+Current setup used Digital Volume to control Headset Volume which is
+pretty saturated after centain gain. Fix the Digital gain at 0dB and use
+Analog gain to do the volume control.
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/335
+Signed-off-by: Srinivas Kandagatla <srinivas.kandagatla@linaro.org>
+Reviewed-by: Johan Hovold <johan+linaro@kernel.org>
+Tested-by: Johan Hovold <johan+linaro@kernel.org>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Qualcomm/sc8280xp/HiFi.conf            |  2 +-
+ ucm2/codecs/wcd938x/HeadphoneEnableSeq.conf |  2 ++
+ ucm2/codecs/wcd938x/init.conf               | 10 +++++-----
+ 3 files changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/ucm2/Qualcomm/sc8280xp/HiFi.conf b/ucm2/Qualcomm/sc8280xp/HiFi.conf
+index a184e9d..02c65e5 100644
+--- a/ucm2/Qualcomm/sc8280xp/HiFi.conf
++++ b/ucm2/Qualcomm/sc8280xp/HiFi.conf
+@@ -44,7 +44,7 @@ SectionDevice."Headphones" {
+ 		PlaybackPriority 200
+ 		PlaybackPCM "hw:${CardId},0"
+ 		PlaybackMixer "default:${CardId}"
+-		PlaybackMixerElem "HP Digital"
++		PlaybackMixerElem "HP"
+ 		JackControl "Headphone Jack"
+ 		JackHWMute "Speaker"
+ 	}
+diff --git a/ucm2/codecs/wcd938x/HeadphoneEnableSeq.conf b/ucm2/codecs/wcd938x/HeadphoneEnableSeq.conf
+index 6c9236d..f996938 100644
+--- a/ucm2/codecs/wcd938x/HeadphoneEnableSeq.conf
++++ b/ucm2/codecs/wcd938x/HeadphoneEnableSeq.conf
+@@ -3,6 +3,8 @@ EnableSequence [
+ 	cset "name='HPHR_RDAC Switch' 1"
+ 	cset "name='HPHL Switch' 1"
+ 	cset "name='HPHR Switch' 1"
++	cset "name='HPHR_COMP Switch' 0"
++	cset "name='HPHL_COMP Switch' 0"
+ 	cset "name='CLSH Switch' 1"
+ 	cset "name='LO Switch' 1"
+ ]
+diff --git a/ucm2/codecs/wcd938x/init.conf b/ucm2/codecs/wcd938x/init.conf
+index 9bf7fd8..3b7c119 100644
+--- a/ucm2/codecs/wcd938x/init.conf
++++ b/ucm2/codecs/wcd938x/init.conf
+@@ -1,8 +1,8 @@
+ # WCD938X specific volume control settings
+ 
+ BootSequence [
+-	cset "name='RX_RX0 Digital Volume' 80"
+-	cset "name='RX_RX1 Digital Volume' 80"
++	cset "name='RX_RX0 Digital Volume' 84"
++	cset "name='RX_RX1 Digital Volume' 84"
+ 	cset "name='ADC2 Volume' 12"
+ ]
+ 
+@@ -10,9 +10,9 @@ LibraryConfig.remap.Config {
+ 
+ 	ctl.default.map {
+ 		# Merge two mono controls into one stereo
+-		"name='HP Digital Volume'" {
+-			"name='RX_RX0 Digital Volume'".vindex.0 0
+-			"name='RX_RX1 Digital Volume'".vindex.1 0
++		"name='HP Volume'" {
++			"name='HPHL Volume'".vindex.0 0
++			"name='HPHR Volume'".vindex.1 0
+ 		}
+ 	}
+ }
+-- 
+2.41.0
+
+
+From 489b9a1406b640d6eeb44b1a78e5750ec6d691ec Mon Sep 17 00:00:00 2001
+From: Srinivas Kandagatla <srinivas.kandagatla@linaro.org>
+Date: Tue, 18 Jul 2023 12:51:06 +0100
+Subject: [PATCH 03/23] ucm2: codecs: wsa883x: add Speakers Volume in init conf
+
+Add combined analog volume controls for Speakers in the init conf
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/335
+Signed-off-by: Srinivas Kandagatla <srinivas.kandagatla@linaro.org>
+Reviewed-by: Johan Hovold <johan+linaro@kernel.org>
+Tested-by: Johan Hovold <johan+linaro@kernel.org>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/codecs/wsa883x/init.conf | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+ create mode 100644 ucm2/codecs/wsa883x/init.conf
+
+diff --git a/ucm2/codecs/wsa883x/init.conf b/ucm2/codecs/wsa883x/init.conf
+new file mode 100644
+index 0000000..75a8fa4
+--- /dev/null
++++ b/ucm2/codecs/wsa883x/init.conf
+@@ -0,0 +1,18 @@
++# WSA883x specific volume control settings
++
++BootSequence [
++	cset "name='WSA_RX0 Digital Volume' 84"
++	cset "name='WSA_RX1 Digital Volume' 84"
++]
++
++LibraryConfig.remap.Config {
++
++	ctl.default.map {
++		# Merge two mono controls into one stereo
++		"name='Speakers Volume'" {
++			"name='SpkrLeft PA Volume'".vindex.0 0
++			"name='SpkrRight PA Volume'".vindex.1 0
++		}
++	}
++}
++
+-- 
+2.41.0
+
+
+From ddf329098b4427851465709d091f8d8770c7c130 Mon Sep 17 00:00:00 2001
+From: Srinivas Kandagatla <srinivas.kandagatla@linaro.org>
+Date: Tue, 18 Jul 2023 12:52:46 +0100
+Subject: [PATCH 04/23] ucm2: Qualcomm: sc8280xp: use Speakers volume control
+
+Make use of Speakers volume control to control analog gain on WSA
+Speakers.
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/335
+Signed-off-by: Srinivas Kandagatla <srinivas.kandagatla@linaro.org>
+Reviewed-by: Johan Hovold <johan+linaro@kernel.org>
+Tested-by: Johan Hovold <johan+linaro@kernel.org>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Qualcomm/sc8280xp/HiFi.conf        | 1 +
+ ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/ucm2/Qualcomm/sc8280xp/HiFi.conf b/ucm2/Qualcomm/sc8280xp/HiFi.conf
+index 02c65e5..0fb5302 100644
+--- a/ucm2/Qualcomm/sc8280xp/HiFi.conf
++++ b/ucm2/Qualcomm/sc8280xp/HiFi.conf
+@@ -29,6 +29,7 @@ SectionDevice."Speaker" {
+ 		PlaybackPriority 100
+ 		PlaybackPCM "hw:${CardId},1"
+ 		PlaybackMixer "default:${CardId}"
++		PlaybackMixerElem "Speakers"
+ 	}
+ }
+ 
+diff --git a/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf b/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf
+index 6df65f9..fd52729 100644
+--- a/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf
++++ b/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf
+@@ -8,3 +8,4 @@ SectionUseCase."HiFi" {
+ Include.card-init.File "/lib/card-init.conf"
+ Include.ctl-remap.File "/lib/ctl-remap.conf"
+ Include.codec-init.File "/codecs/wcd938x/init.conf"
++Include.codec-init.File "/codecs/wsa883x/init.conf"
+-- 
+2.41.0
+
+
+From e25f159098821bb6dbc00d6183d24e36ae11867d Mon Sep 17 00:00:00 2001
+From: Srinivas Kandagatla <srinivas.kandagatla@linaro.org>
+Date: Tue, 18 Jul 2023 12:54:12 +0100
+Subject: [PATCH 05/23] ucm2: codecs: lpass-wsa: use set Digital gain at 0dB
+
+For some reason we ended up with a Digital gain below 0dB, resulting in
+a very low speaker volume.
+Fix this to 0dB and let Analog gain control speakers volume.
+
+CloseS: https://github.com/alsa-project/alsa-ucm-conf/pull/335
+Signed-off-by: Srinivas Kandagatla <srinivas.kandagatla@linaro.org>
+Reviewed-by: Johan Hovold <johan+linaro@kernel.org>
+Tested-by: Johan Hovold <johan+linaro@kernel.org>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf                 | 1 +
+ ucm2/codecs/qcom-lpass/wsa-macro/SpeakerDisableSeq.conf | 2 --
+ ucm2/codecs/qcom-lpass/wsa-macro/SpeakerEnableSeq.conf  | 2 --
+ ucm2/codecs/qcom-lpass/wsa-macro/init.conf              | 6 ++++++
+ ucm2/codecs/wsa883x/init.conf                           | 6 ------
+ 5 files changed, 7 insertions(+), 10 deletions(-)
+ create mode 100644 ucm2/codecs/qcom-lpass/wsa-macro/init.conf
+
+diff --git a/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf b/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf
+index fd52729..dd8f584 100644
+--- a/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf
++++ b/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf
+@@ -9,3 +9,4 @@ Include.card-init.File "/lib/card-init.conf"
+ Include.ctl-remap.File "/lib/ctl-remap.conf"
+ Include.codec-init.File "/codecs/wcd938x/init.conf"
+ Include.codec-init.File "/codecs/wsa883x/init.conf"
++Include.codec-init.File "/codecs/qcom-lpass/wsa-macro/init.conf"
+diff --git a/ucm2/codecs/qcom-lpass/wsa-macro/SpeakerDisableSeq.conf b/ucm2/codecs/qcom-lpass/wsa-macro/SpeakerDisableSeq.conf
+index 1f27d4c..98cf061 100644
+--- a/ucm2/codecs/qcom-lpass/wsa-macro/SpeakerDisableSeq.conf
++++ b/ucm2/codecs/qcom-lpass/wsa-macro/SpeakerDisableSeq.conf
+@@ -1,6 +1,4 @@
+ DisableSequence [
+-	cset "name='WSA_RX0 Digital Volume' 0"
+-	cset "name='WSA_RX1 Digital Volume' 0"
+ 	cset "name='WSA_COMP1 Switch' 0"
+ 	cset "name='WSA_COMP2 Switch' 0"
+ 	cset "name='WSA_RX0 INP0' ZERO"
+diff --git a/ucm2/codecs/qcom-lpass/wsa-macro/SpeakerEnableSeq.conf b/ucm2/codecs/qcom-lpass/wsa-macro/SpeakerEnableSeq.conf
+index 618bab4..488826b 100644
+--- a/ucm2/codecs/qcom-lpass/wsa-macro/SpeakerEnableSeq.conf
++++ b/ucm2/codecs/qcom-lpass/wsa-macro/SpeakerEnableSeq.conf
+@@ -5,6 +5,4 @@ EnableSequence [
+ 	cset "name='WSA_RX1 INP0' RX1"
+ 	cset "name='WSA_COMP1 Switch' 1"
+ 	cset "name='WSA_COMP2 Switch' 1"
+-	cset "name='WSA_RX0 Digital Volume' 68"
+-	cset "name='WSA_RX1 Digital Volume' 68"
+ ]
+diff --git a/ucm2/codecs/qcom-lpass/wsa-macro/init.conf b/ucm2/codecs/qcom-lpass/wsa-macro/init.conf
+new file mode 100644
+index 0000000..29f7c39
+--- /dev/null
++++ b/ucm2/codecs/qcom-lpass/wsa-macro/init.conf
+@@ -0,0 +1,6 @@
++# WSA Digital codec specific volume control settings
++
++BootSequence [
++	cset "name='WSA_RX0 Digital Volume' 84"
++	cset "name='WSA_RX1 Digital Volume' 84"
++]
+diff --git a/ucm2/codecs/wsa883x/init.conf b/ucm2/codecs/wsa883x/init.conf
+index 75a8fa4..ae7d0fb 100644
+--- a/ucm2/codecs/wsa883x/init.conf
++++ b/ucm2/codecs/wsa883x/init.conf
+@@ -1,10 +1,4 @@
+ # WSA883x specific volume control settings
+-
+-BootSequence [
+-	cset "name='WSA_RX0 Digital Volume' 84"
+-	cset "name='WSA_RX1 Digital Volume' 84"
+-]
+-
+ LibraryConfig.remap.Config {
+ 
+ 	ctl.default.map {
+-- 
+2.41.0
+
+
+From 9fd2f06a2c0fdd19b2cdae7d699b18e7d775940f Mon Sep 17 00:00:00 2001
+From: Srinivas Kandagatla <srinivas.kandagatla@linaro.org>
+Date: Wed, 27 Sep 2023 13:22:24 +0100
+Subject: [PATCH 06/23] ucm2: codecs: lpass-rx: use set Digital gain at 0dB
+
+For some reason we ended up with a Digital gain below 0dB, resulting in
+a very low HP volume.
+Fix this to 0dB and let Analog gain control HP volume.
+Also remove all redundant setting of this control.
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/335
+Signed-off-by: Srinivas Kandagatla <srinivas.kandagatla@linaro.org>
+Reviewed-by: Johan Hovold <johan+linaro@kernel.org>
+Tested-by: Johan Hovold <johan+linaro@kernel.org>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf   | 1 +
+ ucm2/codecs/qcom-lpass/rx-macro/init.conf | 6 ++++++
+ ucm2/codecs/wcd938x/DefaultEnableSeq.conf | 2 --
+ ucm2/codecs/wcd938x/init.conf             | 2 --
+ 4 files changed, 7 insertions(+), 4 deletions(-)
+ create mode 100644 ucm2/codecs/qcom-lpass/rx-macro/init.conf
+
+diff --git a/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf b/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf
+index dd8f584..aea66d8 100644
+--- a/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf
++++ b/ucm2/Qualcomm/sc8280xp/LENOVO-X13s.conf
+@@ -10,3 +10,4 @@ Include.ctl-remap.File "/lib/ctl-remap.conf"
+ Include.codec-init.File "/codecs/wcd938x/init.conf"
+ Include.codec-init.File "/codecs/wsa883x/init.conf"
+ Include.codec-init.File "/codecs/qcom-lpass/wsa-macro/init.conf"
++Include.codec-init.File "/codecs/qcom-lpass/rx-macro/init.conf"
+diff --git a/ucm2/codecs/qcom-lpass/rx-macro/init.conf b/ucm2/codecs/qcom-lpass/rx-macro/init.conf
+new file mode 100644
+index 0000000..55b6927
+--- /dev/null
++++ b/ucm2/codecs/qcom-lpass/rx-macro/init.conf
+@@ -0,0 +1,6 @@
++# RX Digital codec specific volume control settings
++
++BootSequence [
++	cset "name='RX_RX0 Digital Volume' 84"
++	cset "name='RX_RX1 Digital Volume' 84"
++]
+diff --git a/ucm2/codecs/wcd938x/DefaultEnableSeq.conf b/ucm2/codecs/wcd938x/DefaultEnableSeq.conf
+index d283a5d..5da6717 100644
+--- a/ucm2/codecs/wcd938x/DefaultEnableSeq.conf
++++ b/ucm2/codecs/wcd938x/DefaultEnableSeq.conf
+@@ -1,6 +1,4 @@
+ EnableSequence [
+-	cset "name='RX_RX0 Digital Volume' 80"
+-	cset "name='RX_RX1 Digital Volume' 80"
+ 	cset "name='HPHR Volume' 20"
+ 	cset "name='HPHL Volume' 20"
+ ]
+diff --git a/ucm2/codecs/wcd938x/init.conf b/ucm2/codecs/wcd938x/init.conf
+index 3b7c119..c2a418c 100644
+--- a/ucm2/codecs/wcd938x/init.conf
++++ b/ucm2/codecs/wcd938x/init.conf
+@@ -1,8 +1,6 @@
+ # WCD938X specific volume control settings
+ 
+ BootSequence [
+-	cset "name='RX_RX0 Digital Volume' 84"
+-	cset "name='RX_RX1 Digital Volume' 84"
+ 	cset "name='ADC2 Volume' 12"
+ ]
+ 
+-- 
+2.41.0
+
+
+From cda5b30bb7f5d0443e0d7be980045acb77dd8457 Mon Sep 17 00:00:00 2001
+From: Sebastian Mangelsen <github@mangelsen.se>
+Date: Wed, 13 Sep 2023 23:16:42 +0200
+Subject: [PATCH 07/23] Roland Bridgecast - add missing intermediate config
+ file
+
+- tested on ArchLinux running UCM version 1.2.10
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/354
+Signed-off-by: Sebastian Mangelsen <github@mangelsen.se>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/USB-Audio/Roland/BridgeCast.conf | 6 ++++++
+ 1 file changed, 6 insertions(+)
+ create mode 100644 ucm2/USB-Audio/Roland/BridgeCast.conf
+
+diff --git a/ucm2/USB-Audio/Roland/BridgeCast.conf b/ucm2/USB-Audio/Roland/BridgeCast.conf
+new file mode 100644
+index 0000000..f943c98
+--- /dev/null
++++ b/ucm2/USB-Audio/Roland/BridgeCast.conf
+@@ -0,0 +1,6 @@
++Comment "Roland BridgeCast Hifi-Mode"
++
++SectionUseCase."HiFi" {
++	Comment "Default"
++	File "/USB-Audio/Roland/BridgeCast-Hifi.conf"
++}
+-- 
+2.41.0
+
+
+From c1acd4022349878ae40718bb11fc4817378b25d5 Mon Sep 17 00:00:00 2001
+From: Sebastian Mangelsen <github@mangelsen.se>
+Date: Wed, 13 Sep 2023 23:21:39 +0200
+Subject: [PATCH 08/23] Roland/BridgeCast - config, improve config title
+
+- comment is used as profile name when using
+  pavucontrol, DEFAULT wasn't saying much
+  thus I've changed it to something more
+  explanatory.
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/354
+Signed-off-by: Sebastian Mangelsen <github@mangelsen.se>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/USB-Audio/Roland/BridgeCast.conf | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ucm2/USB-Audio/Roland/BridgeCast.conf b/ucm2/USB-Audio/Roland/BridgeCast.conf
+index f943c98..6231a72 100644
+--- a/ucm2/USB-Audio/Roland/BridgeCast.conf
++++ b/ucm2/USB-Audio/Roland/BridgeCast.conf
+@@ -1,6 +1,6 @@
+ Comment "Roland BridgeCast Hifi-Mode"
+ 
+ SectionUseCase."HiFi" {
+-	Comment "Default"
++	Comment "BridgeCast MultiChannel"
+ 	File "/USB-Audio/Roland/BridgeCast-Hifi.conf"
+ }
+-- 
+2.41.0
+
+
+From 1c3a937ee2774bfa403f245339e671b67a040755 Mon Sep 17 00:00:00 2001
+From: Sebastian Mangelsen <github@mangelsen.se>
+Date: Thu, 14 Sep 2023 00:32:04 +0200
+Subject: [PATCH 09/23] Roland/BridgeCast - adjust new input channels after
+ latest FW update
+
+- the latest FW updated exposed yet another channel
+  for SFX sounds, played on button events
+- legacy channels have been renumbered
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/354
+Signed-off-by: Sebastian Mangelsen <github@mangelsen.se>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/USB-Audio/Roland/BridgeCast-Hifi.conf | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/ucm2/USB-Audio/Roland/BridgeCast-Hifi.conf b/ucm2/USB-Audio/Roland/BridgeCast-Hifi.conf
+index e708a18..e2f9ac4 100644
+--- a/ucm2/USB-Audio/Roland/BridgeCast-Hifi.conf
++++ b/ucm2/USB-Audio/Roland/BridgeCast-Hifi.conf
+@@ -110,7 +110,7 @@ SectionDevice."Line4" {
+ }
+ 
+ SectionDevice."Line5" {
+-	Comment "Mic"
++	Comment "StreamMix"
+ 
+ 	Value {
+ 		CapturePriority 100
+@@ -128,7 +128,7 @@ SectionDevice."Line5" {
+ }
+ 
+ SectionDevice."Line6" {
+-	Comment "StreamMix"
++	Comment "Mic"
+ 
+ 	Value {
+ 		CapturePriority 200
+@@ -146,7 +146,7 @@ SectionDevice."Line6" {
+ }
+ 
+ SectionDevice."Line7" {
+-	Comment "Unknown"
++	Comment "SFX"
+ 
+ 	Value {
+ 		CapturePriority 300
+@@ -162,5 +162,3 @@ SectionDevice."Line7" {
+ 		ChannelPos1 FR
+ 	}
+ }
+-
+-
+-- 
+2.41.0
+
+
+From a788a42fcb269d33e91c185e50868c2d9119b4de Mon Sep 17 00:00:00 2001
+From: Sebastian Mangelsen <github@mangelsen.se>
+Date: Thu, 14 Sep 2023 00:36:21 +0200
+Subject: [PATCH 10/23] Roland/BridgeCast - adjust capture priority for input
+ channels
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/354
+Signed-off-by: Sebastian Mangelsen <github@mangelsen.se>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/USB-Audio/Roland/BridgeCast-Hifi.conf | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ucm2/USB-Audio/Roland/BridgeCast-Hifi.conf b/ucm2/USB-Audio/Roland/BridgeCast-Hifi.conf
+index e2f9ac4..1812433 100644
+--- a/ucm2/USB-Audio/Roland/BridgeCast-Hifi.conf
++++ b/ucm2/USB-Audio/Roland/BridgeCast-Hifi.conf
+@@ -113,7 +113,7 @@ SectionDevice."Line5" {
+ 	Comment "StreamMix"
+ 
+ 	Value {
+-		CapturePriority 100
++		CapturePriority 300
+ 	}
+ 	Macro.pcm_split.SplitPCMDevice {
+ 		Name "bc_stereo_in"
+@@ -149,7 +149,7 @@ SectionDevice."Line7" {
+ 	Comment "SFX"
+ 
+ 	Value {
+-		CapturePriority 300
++		CapturePriority 100
+ 	}
+ 	Macro.pcm_split.SplitPCMDevice {
+ 		Name "bc_stereo_in"
+-- 
+2.41.0
+
+
+From 6cf648192b06c6d8e3781754a62aa8110ef91a90 Mon Sep 17 00:00:00 2001
+From: Simon Greaves <sjgreaves@gmail.com>
+Date: Mon, 21 Aug 2023 21:42:03 +0100
+Subject: [PATCH 11/23] Add a config for the Allen & Heath Zedi 10 mixer.
+
+The mixer has an embedded 4x4 USB interface, this config surfaces
+the mixer channels as 4 mono inputs, 2 stereo inputs and 2 stereo
+outputs. Config based on the Behringer Flow8 config.
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/341
+Signed-off-by: Simon Greaves <sjgreaves@gmail.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/USB-Audio/AllenAndHeath/Zedi10-Hifi.conf | 194 ++++++++++++++++++
+ ucm2/USB-Audio/AllenAndHeath/Zedi10.conf      |  12 ++
+ ucm2/USB-Audio/USB-Audio.conf                 |   9 +
+ 3 files changed, 215 insertions(+)
+ create mode 100644 ucm2/USB-Audio/AllenAndHeath/Zedi10-Hifi.conf
+ create mode 100644 ucm2/USB-Audio/AllenAndHeath/Zedi10.conf
+
+diff --git a/ucm2/USB-Audio/AllenAndHeath/Zedi10-Hifi.conf b/ucm2/USB-Audio/AllenAndHeath/Zedi10-Hifi.conf
+new file mode 100644
+index 0000000..4bbae15
+--- /dev/null
++++ b/ucm2/USB-Audio/AllenAndHeath/Zedi10-Hifi.conf
+@@ -0,0 +1,194 @@
++Include.pcm_split.File "/common/pcm/split.conf"
++
++Macro [
++	{
++		SplitPCM {
++			Name "zedi10_stereo_out"
++			Direction Playback
++			Channels 2
++			HWChannels 4
++			HWChannelPos0 FL
++			HWChannelPos1 FR
++			HWChannelPos2 FL
++			HWChannelPos3 FR
++		}
++	}
++	{
++		SplitPCM {
++			Name "zedi10_stereo_in"
++			Direction Capture
++			Channels 2
++			HWChannels 4
++			HWChannelPos0 FL
++			HWChannelPos1 FR
++			HWChannelPos2 FL
++			HWChannelPos3 FR
++		}
++	}
++	{
++		SplitPCM {
++			Name "zedi10_mono_in"
++			Direction Capture
++			Channels 1
++			HWChannels 4
++			HWChannelPos0 MONO
++			HWChannelPos1 MONO
++			HWChannelPos2 MONO
++			HWChannelPos3 MONO
++		}
++	}
++]
++
++SectionDevice."Line1" {
++	Comment "USB IN 1-2"
++
++	Value {
++		PlaybackPriority 100
++	}
++
++	Macro.pcm_split.SplitPCMDevice {
++		Name "zedi10_stereo_out"
++		Direction Playback
++		HWChannels 4
++		Channels 2
++		Channel0 0
++		Channel1 1
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Line2" {
++	Comment "USB IN 3-4"
++
++	Value {
++		PlaybackPriority 200
++	}
++
++	Macro.pcm_split.SplitPCMDevice {
++		Name "zedi10_stereo_out"
++		Direction Playback
++		HWChannels 4
++		Channels 2
++		Channel0 2
++		Channel1 3
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Mic1" {
++	Comment "M1"
++
++	ConflictingDevice [
++		"Line12"
++	]
++
++	Value {
++		CapturePriority 100
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "zedi10_mono_in"
++		Direction Capture
++		HWChannels 4
++		Channels 1
++		Channel0 0
++		ChannelPos0 MONO
++	}
++}
++
++SectionDevice."Mic2" {
++	Comment "M2"
++
++	ConflictingDevice [
++		"Line12"
++	]
++
++	Value {
++		CapturePriority 101
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "zedi10_mono_in"
++		Direction Capture
++		HWChannels 4
++		Channels 1
++		Channel0 1
++		ChannelPos0 MONO
++	}
++}
++
++SectionDevice."Mic3" {
++	Comment "M3"
++
++	ConflictingDevice [
++		"Line34"
++	]
++
++	Value {
++		CapturePriority 102
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "zedi10_mono_in"
++		Direction Capture
++		HWChannels 4
++		Channels 1
++		Channel0 2
++		ChannelPos0 MONO
++	}
++}
++
++SectionDevice."Mic4" {
++	Comment "M4"
++
++	ConflictingDevice [
++		"Line34"
++	]
++
++	Value {
++		CapturePriority 103
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "zedi10_mono_in"
++		Direction Capture
++		HWChannels 4
++		Channels 1
++		Channel0 3
++		ChannelPos0 MONO
++	}
++}
++
++SectionDevice."Line12" {
++	Comment "USB OUT 1-2"
++
++	Value {
++		CapturePriority 104
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "zedi10_stereo_in"
++		Direction Capture
++		HWChannels 4
++		Channels 2
++		Channel0 0
++		Channel1 1
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Line34" {
++	Comment "USB OUT 3-4"
++
++	Value {
++		CapturePriority 105
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "zedi10_stereo_in"
++		Direction Capture
++		HWChannels 4
++		Channels 2
++		Channel0 2
++		Channel1 3
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
+diff --git a/ucm2/USB-Audio/AllenAndHeath/Zedi10.conf b/ucm2/USB-Audio/AllenAndHeath/Zedi10.conf
+new file mode 100644
+index 0000000..00d2273
+--- /dev/null
++++ b/ucm2/USB-Audio/AllenAndHeath/Zedi10.conf
+@@ -0,0 +1,12 @@
++Comment "Allen & Heath Zedi10 Recording Mode"
++
++SectionUseCase."Recording" {
++	Comment "Recording Mode (4 chan output, 4 chan input)"
++	File "/USB-Audio/AllenAndHeath/Zedi10-Hifi.conf"
++}
++
++Define.DirectCardName "Zedi10"
++Define.DirectPlaybackChannels 4
++Define.DirectCaptureChannels 4
++
++Include.dhw.File "/common/direct.conf"
+diff --git a/ucm2/USB-Audio/USB-Audio.conf b/ucm2/USB-Audio/USB-Audio.conf
+index a29f33c..81a1446 100644
+--- a/ucm2/USB-Audio/USB-Audio.conf
++++ b/ucm2/USB-Audio/USB-Audio.conf
+@@ -337,6 +337,15 @@ If.ua-volt2 {
+ 	}
+ }
+ 
++If.zedi10 {
++	Condition {
++		Type String
++		Haystack "${CardComponents}"
++		Needle "USB22f0:0016"
++	}
++	True.Define.ProfileName "AllenAndHeath/Zedi10"
++}
++
+ If.mixremap {
+ 	Condition {
+ 		Type String
+-- 
+2.41.0
+
+
+From 90f991ba7740f80e3abc00a07a44061f3ee7da67 Mon Sep 17 00:00:00 2001
+From: Jerome Brunet <jbrunet@baylibre.com>
+Date: Mon, 27 Sep 2021 22:23:40 +0200
+Subject: [PATCH 12/23] meson: add initial p241 support
+
+Add support for the p241 board, the amlogic s905x reference design
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/355
+Signed-off-by: Jerome Brunet <jbrunet@baylibre.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Amlogic/p241/p241-HiFi.conf        | 40 +++++++++++++++++++++++++
+ ucm2/Amlogic/p241/p241.conf             | 31 +++++++++++++++++++
+ ucm2/conf.d/gx-sound-card/GXL-P241.conf |  1 +
+ 3 files changed, 72 insertions(+)
+ create mode 100644 ucm2/Amlogic/p241/p241-HiFi.conf
+ create mode 100644 ucm2/Amlogic/p241/p241.conf
+ create mode 120000 ucm2/conf.d/gx-sound-card/GXL-P241.conf
+
+diff --git a/ucm2/Amlogic/p241/p241-HiFi.conf b/ucm2/Amlogic/p241/p241-HiFi.conf
+new file mode 100644
+index 0000000..056116e
+--- /dev/null
++++ b/ucm2/Amlogic/p241/p241-HiFi.conf
+@@ -0,0 +1,40 @@
++SectionDevice."Line" {
++	Comment "Analog Lineout"
++
++	EnableSequence [
++		cset "name='AIU ACODEC SRC' I2S"
++		cset "name='AIU ACODEC OUT EN Switch' 1"
++		cset "name='ACODEC Playback Switch' 1"
++	]
++
++	DisableSequence [
++		cset "name='ACODEC Playback Switch' 0"
++		cset "name='AIU ACODEC OUT EN Switch' 0"
++		cset "name='AIU ACODEC SRC' DISABLED"
++	]
++
++	Value {
++		PlaybackPriority 100
++		PlaybackPCM "hw:${CardId},0"
++		PlaybackChannels 2
++		PlaybackVolume "ACODEC Playback Volume"
++		PlaybackMixerElem "ACODEC"
++	}
++}
++
++SectionDevice."HDMI" {
++	Comment "HDMI"
++
++	EnableSequence [
++		cset "name='AIU HDMI CTRL SRC' I2S"
++	]
++
++	DisableSequence [
++		cset "name='AIU HDMI CTRL SRC' DISABLED"
++	]
++
++	Value {
++		PlaybackPriority 200
++		PlaybackPCM "hw:${CardId},0"
++	}
++}
+diff --git a/ucm2/Amlogic/p241/p241.conf b/ucm2/Amlogic/p241/p241.conf
+new file mode 100644
+index 0000000..b6f4010
+--- /dev/null
++++ b/ucm2/Amlogic/p241/p241.conf
+@@ -0,0 +1,31 @@
++# Use case for the p241 Amlogic s805x reference design
++
++Syntax 3
++
++SectionUseCase."HiFi" {
++	File "/Amlogic/p241/p241-HiFi.conf"
++	Comment "Play HiFi quality Music"
++}
++
++FixedBootSequence [
++	cset "name='AIU SPDIF SRC SEL' SPDIF"
++]
++
++BootSequence [
++	cset "name='AIU ACODEC I2S Lane Select' 0"
++	cset "name='ACODEC Playback Channel Mode' Stereo"
++	cset "name='ACODEC Playback Volume' 80%"
++	cset "name='ACODEC Ramp Rate' Fast"
++	cset "name='ACODEC Volume Ramp Switch' on"
++	cset "name='ACODEC Mute Ramp Switch' on"
++	cset "name='ACODEC Unmute Ramp Switch' on"
++	cset "name='ACODEC Right DAC Sel' Right"
++	cset "name='ACODEC Left DAC Sel' Left"
++]
++
++SectionDefaults [
++	cset "name='ACODEC Playback Switch' off"
++	cset "name='AIU ACODEC OUT EN Switch' off"
++	cset "name='AIU ACODEC SRC' DISABLED"
++	cset "name='AIU HDMI CTRL SRC' DISABLED"
++]
+diff --git a/ucm2/conf.d/gx-sound-card/GXL-P241.conf b/ucm2/conf.d/gx-sound-card/GXL-P241.conf
+new file mode 120000
+index 0000000..a05d657
+--- /dev/null
++++ b/ucm2/conf.d/gx-sound-card/GXL-P241.conf
+@@ -0,0 +1 @@
++../../Amlogic/p241/p241.conf
+\ No newline at end of file
+-- 
+2.41.0
+
+
+From f869f26401c3d02cef4869750c49d30139041c74 Mon Sep 17 00:00:00 2001
+From: Jerome Brunet <jbrunet@baylibre.com>
+Date: Sun, 23 Jan 2022 19:37:26 +0100
+Subject: [PATCH 13/23] meson: add initial libretech cc support
+
+Add support for the libretech-cc based on the amlogic s905x
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/355
+Signed-off-by: Jerome Brunet <jbrunet@baylibre.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/conf.d/gx-sound-card/LIBRETECH-CC.conf | 1 +
+ 1 file changed, 1 insertion(+)
+ create mode 120000 ucm2/conf.d/gx-sound-card/LIBRETECH-CC.conf
+
+diff --git a/ucm2/conf.d/gx-sound-card/LIBRETECH-CC.conf b/ucm2/conf.d/gx-sound-card/LIBRETECH-CC.conf
+new file mode 120000
+index 0000000..a05d657
+--- /dev/null
++++ b/ucm2/conf.d/gx-sound-card/LIBRETECH-CC.conf
+@@ -0,0 +1 @@
++../../Amlogic/p241/p241.conf
+\ No newline at end of file
+-- 
+2.41.0
+
+
+From fafffe418ea1fd5ac2b43846517490ad9410030e Mon Sep 17 00:00:00 2001
+From: Akihiko Odaki <akihiko.odaki@gmail.com>
+Date: Mon, 3 Oct 2022 18:07:53 +0900
+Subject: [PATCH 14/23] ucm2: acp3xalc5682m98: Add JackControls
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/357
+Signed-off-by: Akihiko Odaki <akihiko.odaki@gmail.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/AMD/acp3xalc5682m98/HiFi.conf | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/ucm2/AMD/acp3xalc5682m98/HiFi.conf b/ucm2/AMD/acp3xalc5682m98/HiFi.conf
+index 97e4294..aa0e91b 100644
+--- a/ucm2/AMD/acp3xalc5682m98/HiFi.conf
++++ b/ucm2/AMD/acp3xalc5682m98/HiFi.conf
+@@ -47,6 +47,7 @@ SectionDevice."Headphones" {
+ 	Value {
+ 		PlaybackPCM "hw:${CardId},0"
+ 		PlaybackMixerElem "DAC1"
++		JackControl "Headphone Jack"
+ 	}
+ 	EnableSequence [
+ 		cset "name='Headphone Jack Switch' on"
+@@ -97,6 +98,7 @@ If.1mic {
+ 			Value {
+ 				CapturePCM "hw:${CardId},0"
+ 				CaptureMixerElem "Headset Mic"
++				JackControl "Headset Mic Jack"
+ 			}
+ 			EnableSequence [
+ 				cset "name='Headset Mic Switch' on"
+@@ -122,6 +124,7 @@ If.1mic {
+ 			Value {
+ 				CapturePCM "hw:${CardId},0"
+ 				CaptureMixerElem "Headset Mic"
++				JackControl "Headset Mic Jack"
+ 			}
+ 			EnableSequence [
+ 				cset "name='Headset Mic Switch' on"
+-- 
+2.41.0
+
+
+From fedff06b0bc04dc82d43346082c43d46d19706f5 Mon Sep 17 00:00:00 2001
+From: Akihiko Odaki <akihiko.odaki@gmail.com>
+Date: Thu, 19 Oct 2023 19:48:39 +0900
+Subject: [PATCH 15/23] ucm2: acp3xalc5682m98: Add priority values
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/357
+Signed-off-by: Akihiko Odaki <akihiko.odaki@gmail.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/AMD/acp3xalc5682m98/HiFi.conf | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/ucm2/AMD/acp3xalc5682m98/HiFi.conf b/ucm2/AMD/acp3xalc5682m98/HiFi.conf
+index aa0e91b..915d020 100644
+--- a/ucm2/AMD/acp3xalc5682m98/HiFi.conf
++++ b/ucm2/AMD/acp3xalc5682m98/HiFi.conf
+@@ -33,6 +33,7 @@ SectionDevice."Speaker" {
+ 	Comment "Speaker"
+ 	Value {
+ 		PlaybackPCM "hw:${CardId},1"
++		PlaybackPriority 200
+ 	}
+ 	EnableSequence [
+ 		cset "name='Spk Switch' on"
+@@ -46,6 +47,7 @@ SectionDevice."Headphones" {
+ 	Comment "Headphones"
+ 	Value {
+ 		PlaybackPCM "hw:${CardId},0"
++		PlaybackPriority 300
+ 		PlaybackMixerElem "DAC1"
+ 		JackControl "Headphone Jack"
+ 	}
+@@ -74,6 +76,7 @@ If.1mic {
+ 			]
+ 			Value {
+ 				CapturePCM "hw:${CardId},2"
++				CapturePriority 200
+ 			}
+ 			EnableSequence [
+ 				cset "name='Dmic Mux' Front Mic"
+@@ -87,6 +90,7 @@ If.1mic {
+ 			]
+ 			Value {
+ 				CapturePCM "hw:${CardId},2"
++				CapturePriority 100
+ 			}
+ 			EnableSequence [
+ 				cset "name='Dmic Mux' Rear Mic"
+@@ -97,6 +101,7 @@ If.1mic {
+ 			Comment "Microphone"
+ 			Value {
+ 				CapturePCM "hw:${CardId},0"
++				CapturePriority 300
+ 				CaptureMixerElem "Headset Mic"
+ 				JackControl "Headset Mic Jack"
+ 			}
+@@ -113,6 +118,7 @@ If.1mic {
+ 			Comment "Internal Microphone"
+ 			Value {
+ 				CapturePCM "hw:${CardId},2"
++				CapturePriority 200
+ 			}
+ 			EnableSequence [
+ 				cset "name='Dmic Mux' Front Mic"
+@@ -123,6 +129,7 @@ If.1mic {
+ 			Comment "Microphone"
+ 			Value {
+ 				CapturePCM "hw:${CardId},0"
++				CapturePriority 300
+ 				CaptureMixerElem "Headset Mic"
+ 				JackControl "Headset Mic Jack"
+ 			}
+-- 
+2.41.0
+
+
+From d0c630e04241d07f1d4148de725813ad58a98cec Mon Sep 17 00:00:00 2001
+From: Janis Jansons <janhouse@gmail.com>
+Date: Wed, 11 Oct 2023 03:33:55 +0300
+Subject: [PATCH 16/23] Add UCM2 configuration for Behringer UMC404HD
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/358
+Signed-off-by: Janis Jansons <janhouse@gmail.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/USB-Audio/Behringer/UMC404HD-HiFi.conf | 200 ++++++++++++++++++++
+ ucm2/USB-Audio/Behringer/UMC404HD.conf      |  11 ++
+ ucm2/USB-Audio/USB-Audio.conf               |  12 ++
+ 3 files changed, 223 insertions(+)
+ create mode 100644 ucm2/USB-Audio/Behringer/UMC404HD-HiFi.conf
+ create mode 100644 ucm2/USB-Audio/Behringer/UMC404HD.conf
+
+diff --git a/ucm2/USB-Audio/Behringer/UMC404HD-HiFi.conf b/ucm2/USB-Audio/Behringer/UMC404HD-HiFi.conf
+new file mode 100644
+index 0000000..df45dca
+--- /dev/null
++++ b/ucm2/USB-Audio/Behringer/UMC404HD-HiFi.conf
+@@ -0,0 +1,200 @@
++Include.pcm_split.File "/common/pcm/split.conf"
++
++Macro [
++	{
++		SplitPCM {
++			Name "umc404hd_stereo_out"
++			Direction Playback
++			Format S32_LE
++			Channels 2
++			HWChannels 4
++			HWChannelPos0 FL
++			HWChannelPos1 FR
++			HWChannelPos2 FL
++			HWChannelPos3 FR
++		}
++	}
++	{
++		SplitPCM {
++			Name "umc404hd_mono_in"
++			Direction Capture
++			Format S32_LE
++			Channels 1
++			HWChannels 4
++			HWChannelPos0 MONO
++			HWChannelPos1 MONO
++			HWChannelPos2 MONO
++			HWChannelPos3 MONO
++		}
++	}
++]
++
++Define.PCMCTLName "PCM Playback"
++
++If.pcm_controls {
++	Condition {
++		Type ControlExists
++		Control "name='UMC404HD 192k Output Playback Switch'"
++	}
++	True.Define.PCMCTLName "UMC404HD 192k Output Playback"
++}
++
++Include.ctl_remap.File "/common/ctl/remap.conf"
++
++Macro [
++	{
++		CtlRemapStereoVolSw {
++			Dst "Line A Playback"
++			Src "${var:PCMCTLName}"
++			Index0 0
++			Index1 1
++		}
++	}
++	{
++		CtlRemapStereoVolSw {
++			Dst "Line B Playback"
++			Src "${var:PCMCTLName}"
++			Index0 2
++			Index1 3
++		}
++	}
++	{
++		CtlRemapMonoVolSw {
++			Dst "Input 1 Capture"
++			Src "Mic Capture"
++			Index 0
++		}
++	}
++	{
++		CtlRemapMonoVolSw {
++			Dst "Input 2 Capture"
++			Src "Mic Capture"
++			Index 1
++		}
++	}
++	{
++		CtlRemapMonoVolSw {
++			Dst "Input 3 Capture"
++			Src "Mic Capture"
++			Index 2
++		}
++	}
++	{
++		CtlRemapMonoVolSw {
++			Dst "Input 4 Capture"
++			Src "Mic Capture"
++			Index 3
++		}
++	}
++]
++
++SectionDevice."Line1" {
++	Comment "Line A"
++	Value {
++		PlaybackPriority 200
++		PlaybackMixer "default:${CardId}"
++		PlaybackMixerElem "Line A"
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "umc404hd_stereo_out"
++		Direction Playback
++		HWChannels 4
++		Channels 2
++		Channel0 0
++		Channel1 1
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Line2" {
++	Comment "Line B"
++
++	Value {
++		PlaybackPriority 100
++		PlaybackMixer "default:${CardId}"
++		PlaybackMixerElem "Line B"
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "umc404hd_stereo_out"
++		Direction Playback
++		HWChannels 4
++		Channels 2
++		Channel0 2
++		Channel1 3
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Mic1" {
++	Comment "Input 1"
++
++	Value {
++		CapturePriority 400
++		CaptureMixer "default:${CardId}"
++		CaptureMixerElem "Input 1"
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "umc404hd_mono_in"
++		Direction Capture
++		HWChannels 4
++		Channels 1
++		Channel0 0
++		ChannelPos0 MONO
++	}
++}
++
++SectionDevice."Mic2" {
++	Comment "Input 2"
++
++	Value {
++		CapturePriority 300
++		CaptureMixer "default:${CardId}"
++		CaptureMixerElem "Input 2"
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "umc404hd_mono_in"
++		Direction Capture
++		HWChannels 4
++		Channels 1
++		Channel0 1
++		ChannelPos0 MONO
++	}
++}
++
++SectionDevice."Mic3" {
++	Comment "Input 3"
++
++	Value {
++		CapturePriority 200
++		CaptureMixer "default:${CardId}"
++		CaptureMixerElem "Input 3"
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "umc404hd_mono_in"
++		Direction Capture
++		HWChannels 4
++		Channels 1
++		Channel0 2
++		ChannelPos0 MONO
++	}
++}
++
++SectionDevice."Mic4" {
++	Comment "Input 4"
++
++	Value {
++		CapturePriority 100
++		CaptureMixer "default:${CardId}"
++		CaptureMixerElem "Input 4"
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "umc404hd_mono_in"
++		Direction Capture
++		HWChannels 4
++		Channels 1
++		Channel0 3
++		ChannelPos0 MONO
++	}
++}
+diff --git a/ucm2/USB-Audio/Behringer/UMC404HD.conf b/ucm2/USB-Audio/Behringer/UMC404HD.conf
+new file mode 100644
+index 0000000..91f231b
+--- /dev/null
++++ b/ucm2/USB-Audio/Behringer/UMC404HD.conf
+@@ -0,0 +1,11 @@
++Comment "Behringer UMC404HD"
++
++SectionUseCase."HiFi" {
++	Comment "Default"
++	File "/USB-Audio/Behringer/UMC404HD-HiFi.conf"
++}
++
++Define.DirectPlaybackChannels 4
++Define.DirectCaptureChannels 4
++
++Include.dhw.File "/common/direct.conf"
+diff --git a/ucm2/USB-Audio/USB-Audio.conf b/ucm2/USB-Audio/USB-Audio.conf
+index 81a1446..aa1f849 100644
+--- a/ucm2/USB-Audio/USB-Audio.conf
++++ b/ucm2/USB-Audio/USB-Audio.conf
+@@ -236,6 +236,18 @@ If.behringer-umc204hd {
+ 	}
+ }
+ 
++If.behringer-umc404hd {
++	Condition {
++		Type String
++		Haystack "${CardComponents}"
++		Needle "USB1397:0509"
++	}
++	True.Define {
++		ProfileName "Behringer/UMC404HD"
++		MixerRemap yes
++	}
++}
++
+ If.behringer-Flow8-Streaming {
+ 	Condition {
+ 	Type String
+-- 
+2.41.0
+
+
+From b422a8e08cb3845053ece1fc832294adca21a684 Mon Sep 17 00:00:00 2001
+From: Shuming Fan <shumingf@realtek.com>
+Date: Thu, 12 Oct 2023 10:07:36 +0800
+Subject: [PATCH 17/23] ucm2: soundwire: add rt713 SDCA device
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/363
+Signed-off-by: Shuming Fan <shumingf@realtek.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/codecs/rt713-dmic/init.conf      |  6 ++++
+ ucm2/codecs/rt713-sdca/init.conf      |  8 ++++++
+ ucm2/sof-soundwire/rt713-dmic.conf    | 21 ++++++++++++++
+ ucm2/sof-soundwire/rt713-sdca.conf    | 40 +++++++++++++++++++++++++++
+ ucm2/sof-soundwire/sof-soundwire.conf |  6 ++--
+ 5 files changed, 78 insertions(+), 3 deletions(-)
+ create mode 100644 ucm2/codecs/rt713-dmic/init.conf
+ create mode 100644 ucm2/codecs/rt713-sdca/init.conf
+ create mode 100644 ucm2/sof-soundwire/rt713-dmic.conf
+ create mode 100644 ucm2/sof-soundwire/rt713-sdca.conf
+
+diff --git a/ucm2/codecs/rt713-dmic/init.conf b/ucm2/codecs/rt713-dmic/init.conf
+new file mode 100644
+index 0000000..6547a36
+--- /dev/null
++++ b/ucm2/codecs/rt713-dmic/init.conf
+@@ -0,0 +1,6 @@
++# RT713-dmic specific volume control settings
++
++BootSequence [
++	cset "name='rt713-dmic ADC 25 Mux' 'DMIC1'"
++	cset "name='rt713-dmic FU1E Capture Switch' 1"
++]
+diff --git a/ucm2/codecs/rt713-sdca/init.conf b/ucm2/codecs/rt713-sdca/init.conf
+new file mode 100644
+index 0000000..df6a7aa
+--- /dev/null
++++ b/ucm2/codecs/rt713-sdca/init.conf
+@@ -0,0 +1,8 @@
++# RT713-sdca specific volume control settings
++
++BootSequence [
++	cset "name='rt713 FU05 Playback Volume' 87"
++	cset "name='rt713 ADC 23 Mux' 'MIC2'"
++	cset "name='rt713 FU0F Capture Volume' 57"
++	cset "name='rt713 FU0F Capture Switch' 1"
++]
+diff --git a/ucm2/sof-soundwire/rt713-dmic.conf b/ucm2/sof-soundwire/rt713-dmic.conf
+new file mode 100644
+index 0000000..dc5fe0e
+--- /dev/null
++++ b/ucm2/sof-soundwire/rt713-dmic.conf
+@@ -0,0 +1,21 @@
++# Use case Configuration for sof-soundwire card
++
++SectionDevice."Mic" {
++	Comment	"SoundWire microphones"
++
++	EnableSequence [
++		cset "name='rt713-dmic FU1E Capture Switch' 1"
++	]
++
++	DisableSequence [
++		cset "name='rt713-dmic FU1E Capture Switch' 0"
++	]
++
++	Value {
++		CapturePriority 100
++		CapturePCM "hw:${CardId},4"
++		CaptureSwitch "rt713-dmic FU1E Capture Switch"
++		CaptureVolume "rt713-dmic FU1E Capture Volume"
++		CaptureMixerElem "rt713-dmic FU1E"
++	}
++}
+diff --git a/ucm2/sof-soundwire/rt713-sdca.conf b/ucm2/sof-soundwire/rt713-sdca.conf
+new file mode 100644
+index 0000000..f1cee7c
+--- /dev/null
++++ b/ucm2/sof-soundwire/rt713-sdca.conf
+@@ -0,0 +1,40 @@
++# Use case Configuration for sof-soundwire card
++
++SectionDevice."Headphones" {
++	Comment	"Headphones"
++
++	EnableSequence [
++		cset "name='Headphone Switch' on"
++	]
++
++	DisableSequence [
++		cset "name='Headphone Switch' off"
++	]
++
++	Value {
++	      PlaybackPriority 200
++	      PlaybackPCM "hw:${CardId}"
++	      JackControl "Headphone Jack"
++	}
++}
++
++SectionDevice."Headset" {
++	Comment "Headset Microphone"
++
++	EnableSequence [
++		cset "name='rt713 FU0F Capture Switch' 1"
++	]
++
++	DisableSequence [
++		cset "name='rt713 FU0F Capture Switch' 0"
++	]
++
++	Value {
++		CapturePriority 200
++		CapturePCM "hw:${CardId},1"
++		JackControl "Headset Mic Jack"
++		CaptureSwitch "rt713 FU0F Capture Switch"
++		CaptureVolume "rt713 FU0F Capture Volume"
++		CaptureMixerElem "rt713 FU0F"
++	}
++}
+diff --git a/ucm2/sof-soundwire/sof-soundwire.conf b/ucm2/sof-soundwire/sof-soundwire.conf
+index 3368d65..18b1bf8 100644
+--- a/ucm2/sof-soundwire/sof-soundwire.conf
++++ b/ucm2/sof-soundwire/sof-soundwire.conf
+@@ -35,7 +35,7 @@ DefineRegex {
+ 		String "${CardComponents}"
+ 	}
+ 	MicCodec {
+-		Regex " mic:([a-z0-9]+(-sdca)?)"
++		Regex " mic:([a-z0-9]+(-dmic)?+(-sdca)?)"
+ 		String "${CardComponents}"
+ 	}
+ 	Mics {
+@@ -47,7 +47,7 @@ DefineRegex {
+ If.hs_init {
+ 	Condition {
+ 		Type RegexMatch
+-		Regex "(rt5682|rt700|rt711(-sdca)?)"
++		Regex "(rt5682|rt700|rt711|rt713(-sdca)?)"
+ 		String "${var:HeadsetCodec1}"
+ 	}
+ 	True.Include.hs_init.File "/codecs/${var:HeadsetCodec1}/init.conf"
+@@ -56,7 +56,7 @@ If.hs_init {
+ If.mic_init {
+ 	Condition {
+ 		Type RegexMatch
+-		Regex "(rt715(-sdca)?)"
++		Regex "(rt713-dmic|rt715(-sdca)?)"
+ 		String "${var:MicCodec1}"
+ 	}
+ 	True.Include.mic_init.File "/codecs/${var:MicCodec1}/init.conf"
+-- 
+2.41.0
+
+
+From 4e0e3423bc28bdd519f1f9f97b253d06206ba620 Mon Sep 17 00:00:00 2001
+From: WeirdTreeThing <bradyn127@protonmail.com>
+Date: Wed, 18 Oct 2023 18:56:27 -0400
+Subject: [PATCH 18/23] ucm2: add acpd7219m98357
+
+For "grunt" chromebooks
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/361
+Signed-off-by: WeirdTreeThing <bradyn127@protonmail.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/AMD/acpd7219m98357/HiFi.conf             | 77 +++++++++++++++++++
+ ucm2/AMD/acpd7219m98357/acpd7219m98357.conf   |  6 ++
+ .../conf.d/acpd7219m98357/acpd7219m98357.conf |  1 +
+ 3 files changed, 84 insertions(+)
+ create mode 100644 ucm2/AMD/acpd7219m98357/HiFi.conf
+ create mode 100644 ucm2/AMD/acpd7219m98357/acpd7219m98357.conf
+ create mode 120000 ucm2/conf.d/acpd7219m98357/acpd7219m98357.conf
+
+diff --git a/ucm2/AMD/acpd7219m98357/HiFi.conf b/ucm2/AMD/acpd7219m98357/HiFi.conf
+new file mode 100644
+index 0000000..ff64063
+--- /dev/null
++++ b/ucm2/AMD/acpd7219m98357/HiFi.conf
+@@ -0,0 +1,77 @@
++SectionVerb {
++	EnableSequence [
++		cset "name='Playback Digital Volume' 111"
++		cset "name='Playback Digital Switch' on"
++		cset "name='Out DACL Mux' DAIL"
++		cset "name='Out DACR Mux' DAIR"
++		cset "name='Mixer Out FilterL DACL Switch' on"
++		cset "name='Mixer Out FilterR DACR Switch' on"
++		cset "name='ST Mixer Out FilterL Out FilterL Switch' on"
++		cset "name='ST Mixer Out FilterR Out FilterR Switch' on"
++		cset "name='Headphone Switch' off"
++		cset "name='Headset Mic Switch' off"
++		cset "name='Mic Volume' 5"
++		cset "name='Capture Digital Volume' 111"
++		cset "name='Capture Digital Switch' on"
++		cset "name='Mixin Volume' 10"
++		cset "name='Mixin Switch' on"
++		cset "name='Mixer In Mic Switch' on"
++		cset "name='Out DAIL Mux' ADC"
++		cset "name='Out DAIR Mux' ADC"
++		cset "name='Gain Ramp Rate' 1"
++	]
++}
++
++SectionDevice."Speaker" {
++	Comment "Speaker"
++
++	Value {
++		PlaybackPriority 100
++		PlaybackPCM "hw:${CardId},2"
++	}
++}
++
++SectionDevice."Headphones" {
++	Comment "Headphones"
++
++	Value {
++		PlaybackPriority 200
++		PlaybackPCM "hw:${CardId},0"
++		PlaybackMixerElem "Headphone"
++		JackControl "Headphone Jack"
++	}
++	EnableSequence [
++		cset "name='Headphone Switch' on"
++	]
++	DisableSequence [
++		cset "name='Headphone Switch' off"
++	]
++}
++
++SectionDevice."Mic" {
++	Comment "Internal Microphone"
++
++	Value {
++		CapturePriority 100
++		CapturePCM "hw:${CardId},4"
++	}
++}
++
++SectionDevice."Headset" {
++	Comment "Headset Microphone"
++
++	Value {
++		CapturePriority 200
++		CapturePCM "hw:${CardId},1"
++		CaptureMixerElem "Headset Mic"
++		JackControl "Headset Mic Jack"
++	}
++	EnableSequence [
++		cset "name='Headset Mic Switch' on"
++		cset "name='Mic Switch' on"
++	]
++	DisableSequence [
++		cset "name='Headset Mic Switch' off"
++		cset "name='Mic Switch' off"
++	]
++}
+diff --git a/ucm2/AMD/acpd7219m98357/acpd7219m98357.conf b/ucm2/AMD/acpd7219m98357/acpd7219m98357.conf
+new file mode 100644
+index 0000000..2cb6c95
+--- /dev/null
++++ b/ucm2/AMD/acpd7219m98357/acpd7219m98357.conf
+@@ -0,0 +1,6 @@
++Syntax 6
++
++SectionUseCase."HiFi" {
++	File "HiFi.conf"
++	Comment "Default"
++}
+diff --git a/ucm2/conf.d/acpd7219m98357/acpd7219m98357.conf b/ucm2/conf.d/acpd7219m98357/acpd7219m98357.conf
+new file mode 120000
+index 0000000..34238f0
+--- /dev/null
++++ b/ucm2/conf.d/acpd7219m98357/acpd7219m98357.conf
+@@ -0,0 +1 @@
++../../AMD/acpd7219m98357/acpd7219m98357.conf
+\ No newline at end of file
+-- 
+2.41.0
+
+
+From 70e39a3d45248eafd553d7cecacde02b5da67f96 Mon Sep 17 00:00:00 2001
+From: WeirdTreeThing <bradyn127@protonmail.com>
+Date: Mon, 30 Oct 2023 08:39:06 -0400
+Subject: [PATCH 19/23] ucm2: acpd7219m98357: Use common da7219 BootSequence
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/361
+Signed-off-by: WeirdTreeThing <bradyn127@protonmail.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/AMD/acpd7219m98357/HiFi.conf           | 24 ---------------------
+ ucm2/AMD/acpd7219m98357/acpd7219m98357.conf |  2 ++
+ 2 files changed, 2 insertions(+), 24 deletions(-)
+
+diff --git a/ucm2/AMD/acpd7219m98357/HiFi.conf b/ucm2/AMD/acpd7219m98357/HiFi.conf
+index ff64063..8b2985d 100644
+--- a/ucm2/AMD/acpd7219m98357/HiFi.conf
++++ b/ucm2/AMD/acpd7219m98357/HiFi.conf
+@@ -1,27 +1,3 @@
+-SectionVerb {
+-	EnableSequence [
+-		cset "name='Playback Digital Volume' 111"
+-		cset "name='Playback Digital Switch' on"
+-		cset "name='Out DACL Mux' DAIL"
+-		cset "name='Out DACR Mux' DAIR"
+-		cset "name='Mixer Out FilterL DACL Switch' on"
+-		cset "name='Mixer Out FilterR DACR Switch' on"
+-		cset "name='ST Mixer Out FilterL Out FilterL Switch' on"
+-		cset "name='ST Mixer Out FilterR Out FilterR Switch' on"
+-		cset "name='Headphone Switch' off"
+-		cset "name='Headset Mic Switch' off"
+-		cset "name='Mic Volume' 5"
+-		cset "name='Capture Digital Volume' 111"
+-		cset "name='Capture Digital Switch' on"
+-		cset "name='Mixin Volume' 10"
+-		cset "name='Mixin Switch' on"
+-		cset "name='Mixer In Mic Switch' on"
+-		cset "name='Out DAIL Mux' ADC"
+-		cset "name='Out DAIR Mux' ADC"
+-		cset "name='Gain Ramp Rate' 1"
+-	]
+-}
+-
+ SectionDevice."Speaker" {
+ 	Comment "Speaker"
+ 
+diff --git a/ucm2/AMD/acpd7219m98357/acpd7219m98357.conf b/ucm2/AMD/acpd7219m98357/acpd7219m98357.conf
+index 2cb6c95..14126dd 100644
+--- a/ucm2/AMD/acpd7219m98357/acpd7219m98357.conf
++++ b/ucm2/AMD/acpd7219m98357/acpd7219m98357.conf
+@@ -4,3 +4,5 @@ SectionUseCase."HiFi" {
+ 	File "HiFi.conf"
+ 	Comment "Default"
+ }
++
++Include.codec-init.File "/codecs/da7219/init.conf"
+-- 
+2.41.0
+
+
+From 24b9ea47b7bfafd963abc224968f91f8afdc7a85 Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Sun, 29 Oct 2023 15:50:07 +0100
+Subject: [PATCH 20/23] codecs/es8316: Fix mono speaker settings from previous
+ boot getting applied
+
+When codecs/es8316/MonoSpeaker.conf's EnableSeq was run last before
+shutdown the 'Playback Polarity' and 'DAC Mono Mix Switch' controls for
+Mono Speaker output get saved and restored on the next boot.
+
+These settings are undone by the MonoSpeaker DisableSeq, but that never
+runs when an updated kernel switches from the default "cfg-spk:1" in
+components to "cfg-spk:2" for devices which do actually have 2 speakers,
+which causes the ucm profile to use codecs/es8316/Speaker.conf instead.
+
+Set the 'Playback Polarity' and 'DAC Mono Mix Switch' controls to their
+defaults in codecs/es8316/EnableSeq.conf to avoid them getting stuck
+in Mono mix mode in this scenario.
+
+Link: https://lore.kernel.org/alsa-devel/20231029145007.24106-1-hdegoede@redhat.com/
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/codecs/es8316/EnableSeq.conf | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/ucm2/codecs/es8316/EnableSeq.conf b/ucm2/codecs/es8316/EnableSeq.conf
+index b6c81d8..b75c4a7 100644
+--- a/ucm2/codecs/es8316/EnableSeq.conf
++++ b/ucm2/codecs/es8316/EnableSeq.conf
+@@ -22,4 +22,8 @@ EnableSequence [
+ 	# Setup muxes / switches
+ 	cset "name='Left Headphone Mixer Left DAC Switch' on"
+ 	cset "name='Right Headphone Mixer Right DAC Switch' on"
++
++	# Undo MonoSpeaker settings which may have been saved on shutdown
++	cset "name='Playback Polarity' 0"
++	cset "name='DAC Mono Mix Switch' off"
+ ]
+-- 
+2.41.0
+
+
+From 5e2f5c6515463be582c185a12891aa00629a55b0 Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Sat, 21 Oct 2023 16:31:09 +0200
+Subject: [PATCH 21/23] chtnau8824: Mono speaker fixes
+
+2 mono speaker setup fixes:
+
+1. Use the kernel's components string to check for a mono-speaker device
+when the board has a components string.
+
+2. So far known nau8824 boards with a mono speaker where using the right
+speaker channel, which is unusual. Normally mono speaker setups use
+only the left speaker channel. The Cyberbook T116 tablet is a nau8824
+based model, which indeed uses the left speaker channel for its single
+speaker.
+
+Modify ucm2/codecs/nau8824/MonoSpeaker.conf to send a left+right
+channel mix to both speaker channels, so that things will work
+independent of which speaker channel is used for a mono setup.
+
+Link: https://lore.kernel.org/alsa-devel/20231021143109.52210-1-hdegoede@redhat.com/
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Intel/chtnau8824/HiFi.conf      | 15 +++++++++++++++
+ ucm2/codecs/nau8824/MonoSpeaker.conf |  7 ++++---
+ 2 files changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/ucm2/Intel/chtnau8824/HiFi.conf b/ucm2/Intel/chtnau8824/HiFi.conf
+index c3d830d..1a1faf4 100644
+--- a/ucm2/Intel/chtnau8824/HiFi.conf
++++ b/ucm2/Intel/chtnau8824/HiFi.conf
+@@ -14,6 +14,21 @@ If.Controls {
+ 	}
+ }
+ 
++# Figure out which components are in use on the device, we check both the
++# components string (present on newer kernels) as well as checking for DMI
++# strings for compatibility with older kernels. Note DMI matches for new
++# models should only be added to the kernel, this UCM profile will then
++# automatically pick up the info from the components string.
++
++If.components-mono-spk {
++	Condition {
++		Type String
++		Haystack "${CardComponents}"
++		Needle "cfg-spk:1"
++	}
++	True.Define.Speaker "MonoSpeaker"
++}
++
+ If.cfg-mspk {
+ 	Condition {
+ 		Type RegexMatch
+diff --git a/ucm2/codecs/nau8824/MonoSpeaker.conf b/ucm2/codecs/nau8824/MonoSpeaker.conf
+index 6b4ef8a..5428133 100644
+--- a/ucm2/codecs/nau8824/MonoSpeaker.conf
++++ b/ucm2/codecs/nau8824/MonoSpeaker.conf
+@@ -11,9 +11,10 @@ SectionDevice."Speaker" {
+ 	]
+ 
+ 	EnableSequence [
+-		# nau8824 mono speaker boards have the speaker on the right chan
+-		cset "name='Speaker Left DACL Volume' 0"
+-		cset "name='Speaker Left DACR Volume' 0"
++		# Some nau8824 mono speaker boards have the speaker on the right chan
++		# others on the left, enable output of both channels on both speakers
++		cset "name='Speaker Left DACL Volume' 1"
++		cset "name='Speaker Left DACR Volume' 1"
+ 		cset "name='Speaker Right DACL Volume' 1"
+ 		cset "name='Speaker Right DACR Volume' 1"
+ 		cset "name='Ext Spk Switch' on"
+-- 
+2.41.0
+
+
+From acc506dbee7602628e0df4eb3c8c14d0d05f69b5 Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Sat, 21 Oct 2023 23:16:13 +0200
+Subject: [PATCH 22/23] bytcr-wm5102: Add support for speakers connected to
+ HPOUT2
+
+On the Lenovo Yoga Tab 3 YT3-X90 the speaker amplifiers are connected
+to the HPOUT2 output pins instead of the the SPK output pins.
+
+Check for "cfg-spk:hpout2" in the components string which indicates
+this setup and add a ucm2/codecs/wm5102/HPOut2-Speaker.conf file
+for this setup.
+
+Link: https://lore.kernel.org/alsa-devel/20231021211614.115152-1-hdegoede@redhat.com/
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Intel/bytcr-wm5102/HiFi.conf      | 11 ++++++++++-
+ ucm2/codecs/wm5102/EnableSeq.conf      |  2 ++
+ ucm2/codecs/wm5102/HPOut2-Speaker.conf | 22 ++++++++++++++++++++++
+ 3 files changed, 34 insertions(+), 1 deletion(-)
+ create mode 100644 ucm2/codecs/wm5102/HPOut2-Speaker.conf
+
+diff --git a/ucm2/Intel/bytcr-wm5102/HiFi.conf b/ucm2/Intel/bytcr-wm5102/HiFi.conf
+index 1269868..2afc757 100644
+--- a/ucm2/Intel/bytcr-wm5102/HiFi.conf
++++ b/ucm2/Intel/bytcr-wm5102/HiFi.conf
+@@ -21,7 +21,16 @@ SectionVerb {
+ 	}
+ }
+ 
+-Include.spk.File "/codecs/wm5102/Speaker.conf"
++If.spk {
++	Condition {
++		Type String
++		Haystack "${CardComponents}"
++		Needle "cfg-spk:hpout2"
++	}
++	True.Include.hpout2.File "/codecs/wm5102/HPOut2-Speaker.conf"
++	False.Include.spk.File "/codecs/wm5102/Speaker.conf"
++}
++
+ Include.hp.File "/codecs/wm5102/HeadPhones.conf"
+ Include.mic.File "/codecs/wm5102/IN3-InternalMic.conf"
+ Include.headset.File "/codecs/wm5102/IN1-HeadsetMic.conf"
+diff --git a/ucm2/codecs/wm5102/EnableSeq.conf b/ucm2/codecs/wm5102/EnableSeq.conf
+index 6a857a2..87cb3bb 100644
+--- a/ucm2/codecs/wm5102/EnableSeq.conf
++++ b/ucm2/codecs/wm5102/EnableSeq.conf
+@@ -4,6 +4,8 @@ EnableSequence [
+ 	cset "name='SPKOUTR Input 1' AIF1RX2"
+ 	cset "name='HPOUT1L Input 1' AIF1RX1"
+ 	cset "name='HPOUT1R Input 1' AIF1RX2"
++	cset "name='HPOUT2L Input 1' AIF1RX1"
++	cset "name='HPOUT2R Input 1' AIF1RX2"
+ 
+ 	# Both mics are quite soft by default, boost then
+ 	cset "name='IN1L Volume' 28"
+diff --git a/ucm2/codecs/wm5102/HPOut2-Speaker.conf b/ucm2/codecs/wm5102/HPOut2-Speaker.conf
+new file mode 100644
+index 0000000..375f9ba
+--- /dev/null
++++ b/ucm2/codecs/wm5102/HPOut2-Speaker.conf
+@@ -0,0 +1,22 @@
++SectionDevice."Speaker" {
++	Comment "Speakers"
++
++	Value {
++		PlaybackPriority 100
++		PlaybackPCM "hw:${CardId}"
++	}
++
++	ConflictingDevice [
++		"Headphones"
++	]
++
++	EnableSequence [
++		cset "name='HPOUT2 Digital Switch' on"
++		cset "name='Speaker Switch' on"
++	]
++
++	DisableSequence [
++		cset "name='HPOUT2 Digital Switch' off"
++		cset "name='Speaker Switch' off"
++	]
++}
+-- 
+2.41.0
+
+
+From 23adf5a368abe9009f44547b91d60a244f735d81 Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Sat, 21 Oct 2023 23:16:14 +0200
+Subject: [PATCH 23/23] bytcr-wm5102: Add support for different microphone
+ routes
+
+Unlike all designs supported sofar the Lenovo Yoga Tab 3 YT3-X90 does not
+have its internal microphone (intmic) on IN3L with the headset microphone
+on IN1L. Instead this tablet has the intmic on IN1L and the hsmic on IN2L.
+
+Add IN1-InternalMic.conf and IN2-HeadsetMic.conf config snippets
+under ucm2/codecs/wm5102/ for this and check the components string
+to determine which microphone routes should be used.
+
+Link: https://lore.kernel.org/alsa-devel/20231021211614.115152-2-hdegoede@redhat.com/
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Intel/bytcr-wm5102/HiFi.conf       | 22 ++++++++++++++++++++--
+ ucm2/codecs/wm5102/EnableSeq.conf       |  3 ++-
+ ucm2/codecs/wm5102/IN1-InternalMic.conf | 23 +++++++++++++++++++++++
+ ucm2/codecs/wm5102/IN2-HeadsetMic.conf  | 24 ++++++++++++++++++++++++
+ 4 files changed, 69 insertions(+), 3 deletions(-)
+ create mode 100644 ucm2/codecs/wm5102/IN1-InternalMic.conf
+ create mode 100644 ucm2/codecs/wm5102/IN2-HeadsetMic.conf
+
+diff --git a/ucm2/Intel/bytcr-wm5102/HiFi.conf b/ucm2/Intel/bytcr-wm5102/HiFi.conf
+index 2afc757..46ef7d1 100644
+--- a/ucm2/Intel/bytcr-wm5102/HiFi.conf
++++ b/ucm2/Intel/bytcr-wm5102/HiFi.conf
+@@ -32,5 +32,23 @@ If.spk {
+ }
+ 
+ Include.hp.File "/codecs/wm5102/HeadPhones.conf"
+-Include.mic.File "/codecs/wm5102/IN3-InternalMic.conf"
+-Include.headset.File "/codecs/wm5102/IN1-HeadsetMic.conf"
++
++If.intmic {
++	Condition {
++		Type String
++		Haystack "${CardComponents}"
++		Needle "cfg-intmic:in1l"
++	}
++	True.Include.intmic1.File "/codecs/wm5102/IN1-InternalMic.conf"
++	False.Include.intmic3.File "/codecs/wm5102/IN3-InternalMic.conf"
++}
++
++If.hsmic {
++	Condition {
++		Type String
++		Haystack "${CardComponents}"
++		Needle "cfg-hsmic:in2l"
++	}
++	True.Include.hsmic2.File "/codecs/wm5102/IN2-HeadsetMic.conf"
++	False.Include.hsmic1.File "/codecs/wm5102/IN1-HeadsetMic.conf"
++}
+diff --git a/ucm2/codecs/wm5102/EnableSeq.conf b/ucm2/codecs/wm5102/EnableSeq.conf
+index 87cb3bb..11166c0 100644
+--- a/ucm2/codecs/wm5102/EnableSeq.conf
++++ b/ucm2/codecs/wm5102/EnableSeq.conf
+@@ -7,8 +7,9 @@ EnableSequence [
+ 	cset "name='HPOUT2L Input 1' AIF1RX1"
+ 	cset "name='HPOUT2R Input 1' AIF1RX2"
+ 
+-	# Both mics are quite soft by default, boost then
++	# mics are quite soft by default, boost then
+ 	cset "name='IN1L Volume' 28"
++	cset "name='IN2L Volume' 28"
+ 	cset "name='IN3L Volume' 28"
+ 
+ 	cset "name='Headphone Switch' off"
+diff --git a/ucm2/codecs/wm5102/IN1-InternalMic.conf b/ucm2/codecs/wm5102/IN1-InternalMic.conf
+new file mode 100644
+index 0000000..d9a70ce
+--- /dev/null
++++ b/ucm2/codecs/wm5102/IN1-InternalMic.conf
+@@ -0,0 +1,23 @@
++SectionDevice."Mic" {
++	Comment "Internal Microphone"
++
++	ConflictingDevice [
++		"Headset"
++	]
++
++	EnableSequence [
++		cset "name='AIF1TX1 Input 1' IN1L"
++		cset "name='AIF1TX2 Input 1' IN1L"
++
++		cset "name='Internal Mic Switch' on"
++	]
++
++	DisableSequence [
++		cset "name='Internal Mic Switch' off"
++	]
++
++	Value {
++		CapturePriority 100
++		CapturePCM "hw:${CardId}"
++	}
++}
+diff --git a/ucm2/codecs/wm5102/IN2-HeadsetMic.conf b/ucm2/codecs/wm5102/IN2-HeadsetMic.conf
+new file mode 100644
+index 0000000..8fbbcb1
+--- /dev/null
++++ b/ucm2/codecs/wm5102/IN2-HeadsetMic.conf
+@@ -0,0 +1,24 @@
++SectionDevice."Headset" {
++	Comment "Headset Microphone"
++
++	ConflictingDevice [
++		"Mic"
++	]
++
++	EnableSequence [
++		cset "name='AIF1TX1 Input 1' IN2L"
++		cset "name='AIF1TX2 Input 1' IN2L"
++
++		cset "name='Headset Mic Switch' on"
++	]
++
++	DisableSequence [
++		cset "name='Headset Mic Switch' off"
++	]
++
++	Value {
++		CapturePriority 200
++		CapturePCM "hw:${CardId}"
++		JackControl "Headset Mic Jack"
++	}
++}
+-- 
+2.41.0
+

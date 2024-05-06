@@ -2,27 +2,27 @@
 #define  prever_dot .rc3
 #define  postver    a
 
-%define version_alsa_lib  1.2.9
-%define version_alsa_ucm  1.2.9
+%define version_alsa_lib  1.2.10
+%define version_alsa_ucm  1.2.10
 %define version_alsa_tplg 1.2.5
 
 Summary:  The Advanced Linux Sound Architecture (ALSA) library
 Name:     alsa-lib
 Version:  %{version_alsa_lib}
-Release:  1%{?prever_dot}%{?dist}
+Release:  2%{?prever_dot}%{?dist}
 License:  LGPLv2+
 URL:      http://www.alsa-project.org/
 
-Source:   ftp://ftp.alsa-project.org/pub/lib/%{name}-%{version}%{?prever}%{?postver}.tar.bz2
-Source1:  ftp://ftp.alsa-project.org/pub/lib/alsa-ucm-conf-%{version_alsa_ucm}.tar.bz2
-Source2:  ftp://ftp.alsa-project.org/pub/lib/alsa-topology-conf-%{version_alsa_tplg}.tar.bz2
+Source:   https://www.alsa-project.org/files/pub/lib/%{name}-%{version}%{?prever}%{?postver}.tar.bz2
+Source1:  https://www.alsa-project.org/files/pub/lib/alsa-ucm-conf-%{version_alsa_ucm}.tar.bz2
+Source2:  https://www.alsa-project.org/files/pub/lib/alsa-topology-conf-%{version_alsa_tplg}.tar.bz2
 Source10: asound.conf
 Source11: modprobe-dist-alsa.conf
 Source12: modprobe-dist-oss.conf
 Source40: alsa-ucm-conf.patch
 Patch0:   alsa-git.patch
 Patch1:   alsa-lib-1.2.3.1-config.patch
-Patch2:   alsa-lib-1.0.14-glibc-open.patch
+Patch2:   alsa-lib-1.2.10-glibc-open.patch
 
 BuildRequires:  doxygen
 BuildRequires:  autoconf automake libtool
@@ -70,9 +70,9 @@ contains alsa-lib configuration of SoC topology
 
 %prep
 %setup -q -n %{name}-%{version}%{?prever}%{?postver}
-%patch0 -p1 -b .alsa-git
-%patch1 -p1 -b .config
-%patch2 -p1 -b .glibc-open
+%patch -P 0 -p1 -b .alsa-git
+%patch -P 1 -p1 -b .config
+%patch -P 2 -p1 -b .glibc-open
 
 %build
 # This package uses top level ASM constructs which are incompatible with LTO.
@@ -124,7 +124,7 @@ mkdir -p %{buildroot}/%{_datadir}/alsa/topology
 # Unpack topologies
 tar xvjf %{SOURCE2} -C %{buildroot}/%{_datadir}/alsa --strip-components=1 "*/topology"
 
-# Remove libtool archives.
+# Remove libtool archives
 find %{buildroot} -name '*.la' -delete
 
 # Remove /usr/include/asoundlib.h
@@ -167,6 +167,9 @@ rm %{buildroot}/%{_includedir}/asoundlib.h
 %{_datadir}/alsa/topology
 
 %changelog
+* Thu Nov 30 2023 Jaroslav Kysela <perex@perex.cz> - 1.2.10-2
+- update to alsa-lib 1.2.10 and alsa-ucm-conf 1.2.10
+
 * Mon May 15 2023 Jaroslav Kysela <perex@perex.cz> - 1.2.9-1
 - update to alsa-lib 1.2.9 and alsa-ucm-conf 1.2.9
 
