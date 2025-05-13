@@ -1,0 +1,717 @@
+From 11b028a9a01e47fc9b48e4a566803752011902e2 Mon Sep 17 00:00:00 2001
+From: Seppo Ingalsuo <seppo.ingalsuo@linux.intel.com>
+Date: Wed, 13 Nov 2024 14:48:38 +0200
+Subject: [PATCH 01/12] UCM2: Intel: sof-hda-dsp: Fix handling of empty
+ sys_vendor
+
+The mistake in UCM syntax caused in alsaucm start error:
+
+ALSA lib ucm_cond.c:367:(if_eval) unknown If.Condition.Type
+
+Fixes: 13022a97711d ("sof-hda-dsp: Fix the case where sysfs dmi
+       sys_vendor attribute is not set")
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/463
+Signed-off-by: Seppo Ingalsuo <seppo.ingalsuo@linux.intel.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Intel/sof-hda-dsp/HiFi-sof.conf | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf b/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf
+index fea8159..c755ba2 100644
+--- a/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf
++++ b/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf
+@@ -6,8 +6,8 @@ Define.SOFVendor "$${sys:devices/virtual/dmi/id/sys_vendor}"
+ 
+ If.SOFVendor {
+ 	Condition {
+-		Type Empty
+-		String "${var:SOFVendor}"
++		Type String
++		Empty "${var:SOFVendor}"
+ 	}
+ 	True.Define.SOFVendor "${sys:devices/virtual/dmi/id/board_vendor}"
+ }
+-- 
+2.47.0
+
+
+From 6397c663d7086b87ca5cbba323ea3dcd0ecd3200 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 13 Nov 2024 16:19:15 +0100
+Subject: [PATCH 02/12] sof-hda-dsp: Fix the case where sysfs dmi product_name
+ attribute is not set
+
+  !!DMI Information
+  !!---------------
+
+  Manufacturer:
+  Product Name:
+  Product Version:
+  Firmware Version:  R6G07
+  System SKU:        Default string
+  Board Vendor:      Default string
+  Board Name:        Default string
+
+BugLink: https://bugzilla.redhat.com/show_bug.cgi?id=2292583
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Intel/sof-hda-dsp/HiFi-sof.conf | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf b/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf
+index c755ba2..5fd1843 100644
+--- a/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf
++++ b/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf
+@@ -3,6 +3,7 @@
+ # File paths for controlling SOF processing
+ 
+ Define.SOFVendor "$${sys:devices/virtual/dmi/id/sys_vendor}"
++Define.SOFProduct "$${sys:devices/virtual/dmi/id/product_name}"
+ 
+ If.SOFVendor {
+ 	Condition {
+@@ -12,6 +13,14 @@ If.SOFVendor {
+ 	True.Define.SOFVendor "${sys:devices/virtual/dmi/id/board_vendor}"
+ }
+ 
++If.SOFProduct {
++	Condition {
++		Type String
++		Empty "${var:SOFProduct}"
++	}
++	True.Define.SOFProduct "${sys:devices/virtual/dmi/id/board_name}"
++}
++
+ If.SOFIPCVer {
+ 	Condition {
+ 		Type ControlExists
+@@ -43,7 +52,7 @@ If.SOFPath {
+ 		HeadphoneIirBlob "${var:BlobPath}/eq_iir/pass.blob"
+ 		HeadphoneFirBlob "${var:BlobPath}/eq_fir/pass.blob"
+ 		HeadphoneDrcBlob "${var:BlobPath}/drc/passthrough.blob"
+-		ConfPathFromDMI "${var:SOFVendor}/${sys:devices/virtual/dmi/id/product_name}.conf"
++		ConfPathFromDMI "${var:SOFVendor}/${var:SOFProduct}"
+ 		SOFProductConfig "/blobs/sof/product_configs/${var:ConfPathFromDMI}"
+ 		SOFConfFullPath "${ConfTopDir}${var:SOFProductConfig}"
+ 		SOFUserConfig "/blobs/sof/user_configs/${var:ConfPathFromDMI}"
+-- 
+2.47.0
+
+
+From 70f5bff86035d454312c9d01e304a95791668ea5 Mon Sep 17 00:00:00 2001
+From: Peter Ujfalusi <peter.ujfalusi@linux.intel.com>
+Date: Tue, 19 Nov 2024 11:51:15 +0200
+Subject: [PATCH 03/12] sof-soundwire: cs42l43-spk: Correct PlaybackPCM and
+ routing
+
+For speaker the correct PCM device to use is "hw:${CardId},2", the
+"hw:${CardId},0" is for headset playback.
+
+Adjust the routing as well since with :0,2 the DP6RX1/2 needs to be
+selected for the speaker.
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/465
+Signed-off-by: Peter Ujfalusi <peter.ujfalusi@linux.intel.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/sof-soundwire/cs42l43-spk.conf | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/ucm2/sof-soundwire/cs42l43-spk.conf b/ucm2/sof-soundwire/cs42l43-spk.conf
+index 73f1299..693c450 100644
+--- a/ucm2/sof-soundwire/cs42l43-spk.conf
++++ b/ucm2/sof-soundwire/cs42l43-spk.conf
+@@ -8,8 +8,8 @@ SectionDevice."Speaker" {
+ 	]
+ 
+ 	EnableSequence [
+-		cset "name='cs42l43 Speaker L Input 1' 'DP5RX1'"
+-		cset "name='cs42l43 Speaker R Input 1' 'DP5RX2'"
++		cset "name='cs42l43 Speaker L Input 1' 'DP6RX1'"
++		cset "name='cs42l43 Speaker R Input 1' 'DP6RX2'"
+ 	]
+ 
+ 	DisableSequence [
+@@ -19,7 +19,7 @@ SectionDevice."Speaker" {
+ 
+ 	Value {
+ 		PlaybackPriority 100
+-		PlaybackPCM "hw:${CardId},0"
++		PlaybackPCM "hw:${CardId},2"
+ 		PlaybackMixerElem "cs42l43 Speaker Digital"
+ 	}
+ }
+-- 
+2.47.0
+
+
+From 02f4fb77d10ab08a2253d77b90942b5ce9a7ed87 Mon Sep 17 00:00:00 2001
+From: lbilli <lbilli@users.noreply.github.com>
+Date: Thu, 14 Nov 2024 20:06:48 -0500
+Subject: [PATCH 04/12] avs_nau8825: Fix JackControl name
+
+This is the name reported by amixer events.
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/464
+Signed-off-by: lbilli <lbilli@users.noreply.github.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Intel/avs/avs_nau8825/avs_nau8825-HiFi.conf | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ucm2/Intel/avs/avs_nau8825/avs_nau8825-HiFi.conf b/ucm2/Intel/avs/avs_nau8825/avs_nau8825-HiFi.conf
+index 3f3e6c9..71f7ed0 100644
+--- a/ucm2/Intel/avs/avs_nau8825/avs_nau8825-HiFi.conf
++++ b/ucm2/Intel/avs/avs_nau8825/avs_nau8825-HiFi.conf
+@@ -21,7 +21,7 @@ SectionDevice."Mic" {
+ 	Value {
+ 		CapturePCM "hw:${CardId},1"
+ 		CaptureCTL "Mic"
+-		JackControl "Headset Mic"
++		JackControl "Headset Mic Jack"
+ 	}
+ 
+ 	EnableSequence [
+-- 
+2.47.0
+
+
+From 30989bd0c2aa3f9f4b6f5e393397b39678717f45 Mon Sep 17 00:00:00 2001
+From: Charles Keepax <ckeepax@opensource.cirrus.com>
+Date: Wed, 20 Nov 2024 10:06:06 +0000
+Subject: [PATCH 05/12] sof-soundwire: cs42l43: Correct CapturePCM and routing
+
+For headset microphone capture the correct PCM device to use is
+"hw:${CardId},1", "hw:${CardId},4" is for built in microphone capture.
+
+Adjust the routing as well since :0,1 is connected to data port 2 on the
+codec.
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/466
+Signed-off-by: Charles Keepax <ckeepax@opensource.cirrus.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/sof-soundwire/cs42l43.conf | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/ucm2/sof-soundwire/cs42l43.conf b/ucm2/sof-soundwire/cs42l43.conf
+index dc11840..4b4e118 100644
+--- a/ucm2/sof-soundwire/cs42l43.conf
++++ b/ucm2/sof-soundwire/cs42l43.conf
+@@ -28,19 +28,19 @@ SectionDevice."Headset" {
+ 		cset "name='cs42l43 ADC1 Input' 'IN1'"
+ 		cset "name='cs42l43 Decimator 1 Mode' 'ADC'"
+ 
+-		cset "name='cs42l43 DP1TX1 Input' 'Decimator 1'"
+-		cset "name='cs42l43 DP1TX2 Input' 'Decimator 1'"
++		cset "name='cs42l43 DP2TX1 Input' 'Decimator 1'"
++		cset "name='cs42l43 DP2TX2 Input' 'Decimator 1'"
+ 	]
+ 
+ 	DisableSequence [
+ 		cset "name='cs42l43 Decimator 1 Switch' 0"
+-		cset "name='cs42l43 DP1TX1 Input' 'None'"
+-		cset "name='cs42l43 DP1TX2 Input' 'None'"
++		cset "name='cs42l43 DP2TX1 Input' 'None'"
++		cset "name='cs42l43 DP2TX2 Input' 'None'"
+ 	]
+ 
+ 	Value {
+ 		CapturePriority 200
+-		CapturePCM "hw:${CardId},4"
++		CapturePCM "hw:${CardId},1"
+ 		CaptureMixer "default:${CardId}"
+ 		CaptureMixerElem "cs42l43 Headset Microphone"
+ 		JackControl "Headset Mic Jack"
+-- 
+2.47.0
+
+
+From 62acef2efffdcb75a35f90d266bcad145b4eab35 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Fri, 29 Nov 2024 14:04:00 +0100
+Subject: [PATCH 06/12] sof-soundwire: whitespace cleanup
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/common/pcm/hdmi.conf             | 2 +-
+ ucm2/sof-soundwire/sof-soundwire.conf | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ucm2/common/pcm/hdmi.conf b/ucm2/common/pcm/hdmi.conf
+index e2820dc..37338ec 100644
+--- a/ucm2/common/pcm/hdmi.conf
++++ b/ucm2/common/pcm/hdmi.conf
+@@ -69,7 +69,7 @@ DefineMacro.HdmiPCMSave {
+ 	}
+ 
+ 	FixedBootSequence [
+-			cfg-save "${var:LibDir}/${var:__Name}.conf:hdmi-pcm"
++		cfg-save "${var:LibDir}/${var:__Name}.conf:hdmi-pcm"
+ 	]
+ }
+ 
+diff --git a/ucm2/sof-soundwire/sof-soundwire.conf b/ucm2/sof-soundwire/sof-soundwire.conf
+index 34f9661..bb14ef2 100644
+--- a/ucm2/sof-soundwire/sof-soundwire.conf
++++ b/ucm2/sof-soundwire/sof-soundwire.conf
+@@ -157,7 +157,7 @@ If.mics-array {
+ 		Empty "${var:Mics1}"
+ 	}
+ 	False.FixedBootSequence {
+-		 # dmic array info
++		# dmic array info
+ 		exec "-nhlt-dmic-info -o ${var:LibDir}/dmics-nhlt.json"
+ 	}
+ }
+-- 
+2.47.0
+
+
+From 4a01327cc43a18124c0a4a5bcfb840e6ed1efe0a Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Wed, 4 Dec 2024 10:20:51 +0100
+Subject: [PATCH 07/12] sof-hda-dsp: Add back missing .conf suffix for
+ product/user specific configs
+
+Fixes: 6397c66 ("sof-hda-dsp: Fix the case where sysfs dmi product_name attribute is not set")
+Closes: https://github.com/alsa-project/alsa-ucm-conf/issues/482
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/Intel/sof-hda-dsp/HiFi-sof.conf | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf b/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf
+index 5fd1843..3a4c445 100644
+--- a/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf
++++ b/ucm2/Intel/sof-hda-dsp/HiFi-sof.conf
+@@ -52,7 +52,7 @@ If.SOFPath {
+ 		HeadphoneIirBlob "${var:BlobPath}/eq_iir/pass.blob"
+ 		HeadphoneFirBlob "${var:BlobPath}/eq_fir/pass.blob"
+ 		HeadphoneDrcBlob "${var:BlobPath}/drc/passthrough.blob"
+-		ConfPathFromDMI "${var:SOFVendor}/${var:SOFProduct}"
++		ConfPathFromDMI "${var:SOFVendor}/${var:SOFProduct}.conf"
+ 		SOFProductConfig "/blobs/sof/product_configs/${var:ConfPathFromDMI}"
+ 		SOFConfFullPath "${ConfTopDir}${var:SOFProductConfig}"
+ 		SOFUserConfig "/blobs/sof/user_configs/${var:ConfPathFromDMI}"
+-- 
+2.47.0
+
+
+From 0782bf435b8332833e7b3fc91501d78473dd6edf Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Fri, 29 Nov 2024 14:17:57 +0100
+Subject: [PATCH 08/12] amd-soundwire: add support for AMD generic legacy
+ machine driver
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/478
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/470
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/conf.d/amd-soundwire/amd-soundwire.conf |  1 +
+ ucm2/sof-soundwire/rt722.conf                | 15 +++++++++++++++
+ 2 files changed, 16 insertions(+)
+ create mode 120000 ucm2/conf.d/amd-soundwire/amd-soundwire.conf
+
+diff --git a/ucm2/conf.d/amd-soundwire/amd-soundwire.conf b/ucm2/conf.d/amd-soundwire/amd-soundwire.conf
+new file mode 120000
+index 0000000..0d00b73
+--- /dev/null
++++ b/ucm2/conf.d/amd-soundwire/amd-soundwire.conf
+@@ -0,0 +1 @@
++../../sof-soundwire/sof-soundwire.conf
+\ No newline at end of file
+diff --git a/ucm2/sof-soundwire/rt722.conf b/ucm2/sof-soundwire/rt722.conf
+index a54664e..a4a431b 100644
+--- a/ucm2/sof-soundwire/rt722.conf
++++ b/ucm2/sof-soundwire/rt722.conf
+@@ -86,6 +86,21 @@ SectionDevice."Headset" {
+ 		cset "name='rt722 FU0F Capture Switch' 0"
+ 	]
+ 
++	If.hsmicsw {
++		Condition {
++			Type ControlExists
++			Control "name='Headset Mic Switch'"
++		}
++		True {
++			EnableSequence [
++				cset "name='Headset Mic Switch' on"
++			]
++			DisableSequence [
++				cset "name='Headset Mic Switch' off"
++			]
++		}
++	}
++
+ 	Value {
+ 		CapturePriority 200
+ 		CapturePCM "hw:${CardId},1"
+-- 
+2.47.0
+
+
+From 003201356388692525a60bbd0da359f97aac99f3 Mon Sep 17 00:00:00 2001
+From: Peter Ujfalusi <peter.ujfalusi@linux.intel.com>
+Date: Tue, 10 Dec 2024 11:04:31 +0200
+Subject: [PATCH 09/12] ucm2: sof-soundwire: Correct FixedBootSequence for dmic
+ info
+
+Replace the curly brackets with square brackets.
+The curly ones break the FixedBootSequence parsing by resetting the
+sequence.
+If the /var/lib/alsa/card0.conf.d is not present then UCM will fail because
+all sequences before the dmic is lost, including the card-init:
+
+# alsactl init
+alsa-lib main.c:619:(execute_cfgsave) unable to open file '/var/lib/alsa/card0.conf.d/42-sof-hdmi.conf': No such file or directory
+alsa-lib main.c:2456:(set_fixedboot_user) Unable to execute force boot sequence
+
+The full sequence supposed to be:
+card-init
+ctl-remap
+cs42l43
+dmic
+hdmi
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/485
+Fixes: 9fa70add7638 ("sof-hda-dsp,sof-soundwire: add CaptureMicInfoFile fields for dmics")
+Signed-off-by: Peter Ujfalusi <peter.ujfalusi@linux.intel.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/sof-soundwire/sof-soundwire.conf | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ucm2/sof-soundwire/sof-soundwire.conf b/ucm2/sof-soundwire/sof-soundwire.conf
+index bb14ef2..a2f9589 100644
+--- a/ucm2/sof-soundwire/sof-soundwire.conf
++++ b/ucm2/sof-soundwire/sof-soundwire.conf
+@@ -156,10 +156,10 @@ If.mics-array {
+ 		Type String
+ 		Empty "${var:Mics1}"
+ 	}
+-	False.FixedBootSequence {
++	False.FixedBootSequence [
+ 		# dmic array info
+ 		exec "-nhlt-dmic-info -o ${var:LibDir}/dmics-nhlt.json"
+-	}
++	]
+ }
+ 
+ Include.hdmi-pcm.File "/common/pcm/hdmi.conf"
+-- 
+2.47.0
+
+
+From 52c5cd74512c8130bdb6504cdb4859a89154b35d Mon Sep 17 00:00:00 2001
+From: Konna1337 <r34p3r666@web.de>
+Date: Sun, 24 Nov 2024 04:51:49 +0100
+Subject: [PATCH 10/12] Configuration files for Roland Bridge Cast X V2
+
+Added configuration for Roland BridgeCast X. X Version of Bridgecast is wired diferently than the non X Version wich is supported
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/469
+Signed-off-by: Konna1337 <r34p3r666@web.de>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/USB-Audio/Roland/BridgeCastXV2-Hifi.conf | 174 ++++++++++++++++++
+ ucm2/USB-Audio/Roland/BridgeCastXV2.conf      |   6 +
+ ucm2/USB-Audio/USB-Audio.conf                 |   9 +
+ 3 files changed, 189 insertions(+)
+ create mode 100644 ucm2/USB-Audio/Roland/BridgeCastXV2-Hifi.conf
+ create mode 100644 ucm2/USB-Audio/Roland/BridgeCastXV2.conf
+
+diff --git a/ucm2/USB-Audio/Roland/BridgeCastXV2-Hifi.conf b/ucm2/USB-Audio/Roland/BridgeCastXV2-Hifi.conf
+new file mode 100644
+index 0000000..426a15a
+--- /dev/null
++++ b/ucm2/USB-Audio/Roland/BridgeCastXV2-Hifi.conf
+@@ -0,0 +1,174 @@
++Include.pcm_split.File "/common/pcm/split.conf"
++
++Macro [
++	{
++		SplitPCM {
++			Name "bc_stereo_out"
++			Direction Playback
++			Channels 2
++			HWChannels 16
++			HWChannelPos0 FL
++			HWChannelPos1 FR
++			HWChannelPos2 FL
++			HWChannelPos3 FR
++			HWChannelPos4 FL
++			HWChannelPos5 FR
++			HWChannelPos6 FL
++			HWChannelPos7 FR
++			HWChannelPos6 FL
++			HWChannelPos7 FR
++			HWChannelPos8 FL
++			HWChannelPos9 FR
++			HWChannelPos10 FL
++			HWChannelPos11 FR
++			HWChannelPos12 FL
++			HWChannelPos13 FR
++			HWChannelPos14 FL
++			HWChannelPos15 FR
++		}
++	}
++	{
++		SplitPCM {
++			Name "bc_stereo_in"
++			Direction Capture
++			Channels 2
++			HWChannels 6
++			HWChannelPos0 FL
++			HWChannelPos1 FR
++			HWChannelPos2 FL
++			HWChannelPos3 FR
++			HWChannelPos4 FL
++			HWChannelPos5 FR
++		}
++	}
++]
++
++SectionDevice."Line1" {
++	Comment "Chat L/R"
++
++	Value {
++		PlaybackPriority 100
++	}
++
++	Macro.pcm_split.SplitPCMDevice {
++		Name "bc_stereo_out"
++		Direction Playback
++		HWChannels 16
++		Channels 2
++		Channel0 0
++		Channel1 1
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Line2" {
++	Comment "Game L/R"
++
++	Value {
++		PlaybackPriority 200
++	}
++
++	Macro.pcm_split.SplitPCMDevice {
++		Name "bc_stereo_out"
++		Direction Playback
++		HWChannels 16
++		Channels 2
++		Channel0 2
++		Channel1 3
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Line3" {
++	Comment "Music L/R"
++
++	Value {
++		PlaybackPriority 300
++	}
++
++	Macro.pcm_split.SplitPCMDevice {
++		Name "bc_stereo_out"
++		Direction Playback
++		HWChannels 16
++		Channels 2
++		Channel0 12
++		Channel1 13
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Line4" {
++	Comment "System L/R"
++
++	Value {
++		PlaybackPriority 400
++	}
++
++	Macro.pcm_split.SplitPCMDevice {
++		Name "bc_stereo_out"
++		Direction Playback
++		HWChannels 16
++		Channels 2
++		Channel0 10
++		Channel1 11
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Line5" {
++	Comment "StreamMix"
++
++	Value {
++		CapturePriority 300
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "bc_stereo_in"
++		Direction Capture
++		HWChannels 6
++		Channels 2
++		Channel0 0
++		Channel1 1
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Line6" {
++	Comment "Mic"
++
++	Value {
++		CapturePriority 200
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "bc_stereo_in"
++		Direction Capture
++		HWChannels 6
++		Channels 2
++		Channel0 2
++		Channel1 3
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
++
++SectionDevice."Line7" {
++	Comment "SFX"
++
++	Value {
++		CapturePriority 100
++	}
++	Macro.pcm_split.SplitPCMDevice {
++		Name "bc_stereo_in"
++		Direction Capture
++		HWChannels 6
++		Channels 2
++		Channel0 4
++		Channel1 5
++		ChannelPos0 FL
++		ChannelPos1 FR
++	}
++}
+diff --git a/ucm2/USB-Audio/Roland/BridgeCastXV2.conf b/ucm2/USB-Audio/Roland/BridgeCastXV2.conf
+new file mode 100644
+index 0000000..daf77a1
+--- /dev/null
++++ b/ucm2/USB-Audio/Roland/BridgeCastXV2.conf
+@@ -0,0 +1,6 @@
++Comment "Roland BridgeCast XV2 Hifi-Mode"
++
++SectionUseCase."HiFi" {
++	Comment "BridgeCast MultiChannel"
++	File "/USB-Audio/Roland/BridgeCastXV2-Hifi.conf"
++}
+diff --git a/ucm2/USB-Audio/USB-Audio.conf b/ucm2/USB-Audio/USB-Audio.conf
+index 9019fbc..a01241d 100644
+--- a/ucm2/USB-Audio/USB-Audio.conf
++++ b/ucm2/USB-Audio/USB-Audio.conf
+@@ -182,6 +182,15 @@ If.roland-bridgecastv2 {
+ 	True.Define.ProfileName "Roland/BridgeCastV2"
+ }
+ 
++If.roland-bridgecastx {
++	Condition {
++		Type String
++		Haystack "${CardComponents}"
++		Needle "USB0582:0321"
++	}
++	True.Define.ProfileName "Roland/BridgeCastXV2"
++}
++
+ If.motu-m246 {
+ 	Condition {
+ 		Type RegexMatch
+-- 
+2.47.0
+
+
+From 77ff0f7edbf48179d5da3fe3e4f1fc6bd96af2f6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andrija=20Vu=C4=8Dini=C4=87?= <andrija.vucinic@gmail.com>
+Date: Tue, 10 Dec 2024 14:47:28 +0100
+Subject: [PATCH 11/12] USB-Audio: ALC4080 - add ASUS ROG STRIX X870E-E GAMING
+ WIFI (USB 0b05:1b9b)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/486
+Signed-off-by: Andrija Vučinić <andrija.vucinic@gmail.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/USB-Audio/USB-Audio.conf | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/ucm2/USB-Audio/USB-Audio.conf b/ucm2/USB-Audio/USB-Audio.conf
+index a01241d..bd1983e 100644
+--- a/ucm2/USB-Audio/USB-Audio.conf
++++ b/ucm2/USB-Audio/USB-Audio.conf
+@@ -60,6 +60,7 @@ If.realtek-alc4080 {
+ 		# 0b05:1a5c ASUS ROG Strix B650E-I Gaming WiFi
+ 		# 0b05:1a97 ASUS ROG Maximus Z790 Apex Encore
+ 		# 0b05:1af1 ASUS ROG Strix Z790-A Gaming Wifi II
++		# 0b05:1b9b ASUS ROG STRIX X870E-E GAMING WIFI
+ 		# 0db0:005a MSI MPG Z690 CARBON WIFI
+ 		# 0db0:0b58 MSI MPG X870E CARBON WIFI
+ 		# 0db0:124b MSI MEG Z690 ACE
+@@ -91,7 +92,7 @@ If.realtek-alc4080 {
+ 		# 26ce:0a06 ASRock X670E/Z790 Taichi
+ 		# 26ce:0a08 ASRock Z790 PG-ITX/TB4, X870 Steel Legend
+ 		# 26ce:0a0b ASRock X870E Taichi
+-		Regex "USB((0414:a0(0e|1[0124]))|(0b05:(19(84|9[69])|1a(16|2[07]|5[23c]|97|f1)))|(0db0:(005a|0b58|124b|151f|1feb|3130|36e7|4(19c|22d|240|88c)|543d|62a4|6c[0c]9|70d3|7696|82c7|8af7|961e|a(073|228|47c|74b)|b202|cd0e|d1d7|d6e7))|(26ce:0a0[68b]))"
++		Regex "USB((0414:a0(0e|1[0124]))|(0b05:(19(84|9[69])|1a(16|2[07]|5[23c]|97|f1)|1b9b))|(0db0:(005a|0b58|124b|151f|1feb|3130|36e7|4(19c|22d|240|88c)|543d|62a4|6c[0c]9|70d3|7696|82c7|8af7|961e|a(073|228|47c|74b)|b202|cd0e|d1d7|d6e7))|(26ce:0a0[68b]))"
+ 	}
+ 	True.Define.ProfileName "Realtek/ALC4080"
+ }
+-- 
+2.47.0
+
+
+From cde064fd3a1a7cd57b56d32d42ae57f7e8b454e7 Mon Sep 17 00:00:00 2001
+From: Sergey <myserg@gmail.com>
+Date: Mon, 16 Dec 2024 04:29:47 +0300
+Subject: [PATCH 12/12] USB-Audio: ALC4080: add support for MSI MEG X670E
+ GODLIKE (USB 0db0:e1f8)
+
+www.msi.com/Motherboard/MEG-X670E-GODLIKE
+
+Closes: https://github.com/alsa-project/alsa-ucm-conf/pull/488
+Signed-off-by: Sergey <myserg@gmail.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ ucm2/USB-Audio/USB-Audio.conf | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/ucm2/USB-Audio/USB-Audio.conf b/ucm2/USB-Audio/USB-Audio.conf
+index bd1983e..d942f0e 100644
+--- a/ucm2/USB-Audio/USB-Audio.conf
++++ b/ucm2/USB-Audio/USB-Audio.conf
+@@ -89,10 +89,11 @@ If.realtek-alc4080 {
+ 		# 0db0:cd0e MSI X870 Tomahawk
+ 		# 0db0:d1d7 MSI PRO Z790-A WIFI
+ 		# 0db0:d6e7 MSI MPG X670E Carbon Wifi
++		# 0db0:e1f8 MSI MEG X670E Godlike
+ 		# 26ce:0a06 ASRock X670E/Z790 Taichi
+ 		# 26ce:0a08 ASRock Z790 PG-ITX/TB4, X870 Steel Legend
+ 		# 26ce:0a0b ASRock X870E Taichi
+-		Regex "USB((0414:a0(0e|1[0124]))|(0b05:(19(84|9[69])|1a(16|2[07]|5[23c]|97|f1)|1b9b))|(0db0:(005a|0b58|124b|151f|1feb|3130|36e7|4(19c|22d|240|88c)|543d|62a4|6c[0c]9|70d3|7696|82c7|8af7|961e|a(073|228|47c|74b)|b202|cd0e|d1d7|d6e7))|(26ce:0a0[68b]))"
++		Regex "USB((0414:a0(0e|1[0124]))|(0b05:(19(84|9[69])|1a(16|2[07]|5[23c]|97|f1)|1b9b))|(0db0:(005a|0b58|124b|151f|1feb|3130|36e7|4(19c|22d|240|88c)|543d|62a4|6c[0c]9|70d3|7696|82c7|8af7|961e|a(073|228|47c|74b)|b202|cd0e|d1d7|d6e7|e1f8))|(26ce:0a0[68b]))"
+ 	}
+ 	True.Define.ProfileName "Realtek/ALC4080"
+ }
+-- 
+2.47.0
+

@@ -2,15 +2,15 @@
 #define  prever_dot .rc3
 #define  postver    a
 
-%define version_alsa_lib  1.2.12
-%define version_alsa_ucm  1.2.12
+%define version_alsa_lib  1.2.13
+%define version_alsa_ucm  1.2.13
 %define version_alsa_tplg 1.2.5
 
 Summary:  The Advanced Linux Sound Architecture (ALSA) library
 Name:     alsa-lib
 Version:  %{version_alsa_lib}
-Release:  1%{?prever_dot}%{?dist}
-License:  LGPLv2+
+Release:  2%{?prever_dot}%{?dist}
+License:  LGPL-2.1-or-later
 URL:      http://www.alsa-project.org/
 
 Source:   https://www.alsa-project.org/files/pub/lib/%{name}-%{version}%{?prever}%{?postver}.tar.bz2
@@ -19,8 +19,8 @@ Source2:  https://www.alsa-project.org/files/pub/lib/alsa-topology-conf-%{versio
 Source10: asound.conf
 Source11: modprobe-dist-alsa.conf
 Source12: modprobe-dist-oss.conf
-#Source40: alsa-ucm-conf.patch
-#Patch0:   alsa-git.patch
+Source40: alsa-ucm-conf.patch
+Patch0:   alsa-git.patch
 Patch1:   alsa-lib-1.2.3.1-config.patch
 Patch2:   alsa-lib-1.2.10-glibc-open.patch
 
@@ -70,7 +70,7 @@ contains alsa-lib configuration of SoC topology
 
 %prep
 %setup -q -n %{name}-%{version}%{?prever}%{?postver}
-#patch -P 0 -p1 -b .alsa-git
+%patch -P 0 -p1 -b .alsa-git
 %patch -P 1 -p1 -b .config
 %patch -P 2 -p1 -b .glibc-open
 
@@ -116,7 +116,7 @@ mkdir -p %{buildroot}/%{_datadir}/alsa/ucm2
 
 # Unpack UCMs
 tar xvjf %{SOURCE1} -C %{buildroot}/%{_datadir}/alsa --strip-components=1 "*/ucm" "*/ucm2"
-#patch -d %{buildroot}/%{_datadir}/alsa -p1 < %{SOURCE40}
+patch -d %{buildroot}/%{_datadir}/alsa -p1 < %{SOURCE40}
 
 # Create topology directory
 mkdir -p %{buildroot}/%{_datadir}/alsa/topology
@@ -167,6 +167,9 @@ rm %{buildroot}/%{_includedir}/asoundlib.h
 %{_datadir}/alsa/topology
 
 %changelog
+* Mon Dec 16 2024 Jaroslav Kysela <perex@perex.cz> - 1.2.13-2
+- update to alsa-lib 1.2.13 and alsa-ucm-conf 1.2.13
+
 * Fri Jun 15 2024 Jaroslav Kysela <perex@perex.cz> - 1.2.12-1
 - update to alsa-lib 1.2.12 and alsa-ucm-conf 1.2.12
 
