@@ -1,0 +1,256 @@
+From 76edab4e595bd5f3f4c636cccc8d7976d3c519d6 Mon Sep 17 00:00:00 2001
+From: Nicholas Vinson <nvinson234@gmail.com>
+Date: Thu, 14 Nov 2024 07:49:53 -0500
+Subject: [PATCH 1/5] src/Versions.in.in: Update *_tempo_base name
+
+Change @SYMBOL_PREFIX@snd_has_tempo_base to
+@SYMBOL_PREFIX@snd_has_queue_tempo_base.
+
+Starting with version 1.2.13, alsa-lib fails to link with ld.lld-19 due
+to "version script assignment of 'ALSA_1.2.13' to symbol
+'snd_seq_has_tempo_base' failed: symbol not defined".
+
+Per commit 769d1db1b0a213a39c7e59c0d1d724e7f45b1ac3 the correct name for
+the symbol is @SYMBOL_PREFIX@snd_has_queue_tempo_base; therefore, update
+src/Vesions.in.in to match.
+
+Fixes bug #420
+Fixes Gentoo bug 943399 (https://bugs.gentoo.org/943399)
+
+Closes: https://github.com/alsa-project/alsa-lib/pull/421
+Signed-off-by: Nicholas Vinson <nvinson234@gmail.com>
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/Versions.in.in | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/Versions.in.in b/src/Versions.in.in
+index 350ec3d8..7ad6a633 100644
+--- a/src/Versions.in.in
++++ b/src/Versions.in.in
+@@ -212,7 +212,7 @@ ALSA_1.2.13 {
+     @SYMBOL_PREFIX@snd_seq_create_ump_block;
+     @SYMBOL_PREFIX@snd_seq_queue_tempo_get_tempo_base;
+     @SYMBOL_PREFIX@snd_seq_queue_tempo_set_tempo_base;
+-    @SYMBOL_PREFIX@snd_seq_has_tempo_base;
++    @SYMBOL_PREFIX@snd_seq_has_queue_tempo_base;
+     @SYMBOL_PREFIX@snd_seq_port_info_get_ump_is_midi1;
+     @SYMBOL_PREFIX@snd_seq_port_info_set_ump_is_midi1;
+ #endif
+-- 
+2.47.0
+
+
+From 6880219ad4ba55ae8a94a34b7a987b3369f7c96f Mon Sep 17 00:00:00 2001
+From: Takashi Iwai <tiwai@suse.de>
+Date: Sun, 24 Nov 2024 09:32:29 +0100
+Subject: [PATCH 2/5] configure: Make sequencer dependent on rawmidi
+
+The sequencer feature requires rawmidi implicitly, and it became more
+obvious with UMP support.  Add the dependency check to configure
+script.
+
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+---
+ configure.ac | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/configure.ac b/configure.ac
+index 1cd22a59..69aeb978 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -483,6 +483,12 @@ fi
+ AC_SUBST(PYTHON_LIBS)
+ AC_SUBST(PYTHON_INCLUDES)
+ 
++if test "$build_rawmidi" != "yes"; then
++  if test "$build_seq" = "yes"; then
++    AC_ERROR([Cannot enable sequencer without rawmidi])
++  fi
++fi
++
+ AM_CONDITIONAL([BUILD_MIXER], [test x$build_mixer = xyes])
+ AM_CONDITIONAL([BUILD_PCM], [test x$build_pcm = xyes])
+ AM_CONDITIONAL([BUILD_RAWMIDI], [test x$build_rawmidi = xyes])
+-- 
+2.47.0
+
+
+From 07cee0ba05179a56764c35975d5822420d4f31f9 Mon Sep 17 00:00:00 2001
+From: Takashi Iwai <tiwai@suse.de>
+Date: Sun, 24 Nov 2024 09:33:16 +0100
+Subject: [PATCH 3/5] seq: include UMP headers
+
+Some applications seem including alsa/seqmid.h individually, and this
+got broken with the update of alsa-lib because now we have
+dependencies to UMP stuff.  Include the necessary UMP headers
+internally.  Also, add the inclusion of rawmidi.h in ump.h for similar
+reasons.
+
+Link: https://bugzilla.suse.com/show_bug.cgi?id=1233682
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+---
+ include/seq.h       | 2 ++
+ include/seq_event.h | 2 ++
+ include/ump.h       | 2 ++
+ 3 files changed, 6 insertions(+)
+
+diff --git a/include/seq.h b/include/seq.h
+index 2eee95a6..5082ad0a 100644
+--- a/include/seq.h
++++ b/include/seq.h
+@@ -29,6 +29,8 @@
+ #ifndef __ALSA_SEQ_H
+ #define __ALSA_SEQ_H
+ 
++#include "ump.h"
++
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+diff --git a/include/seq_event.h b/include/seq_event.h
+index 9ca384ee..0b59202f 100644
+--- a/include/seq_event.h
++++ b/include/seq_event.h
+@@ -28,6 +28,8 @@
+ #ifndef __ALSA_SEQ_EVENT_H
+ #define __ALSA_SEQ_EVENT_H
+ 
++#include "ump_msg.h"
++
+ /**
+  *  \defgroup SeqEvents Sequencer Event Definitions
+  *  Sequencer Event Definitions
+diff --git a/include/ump.h b/include/ump.h
+index 1043d237..06c86a5e 100644
+--- a/include/ump.h
++++ b/include/ump.h
+@@ -9,6 +9,8 @@
+ #ifndef __ALSA_UMP_H
+ #define __ALSA_UMP_H
+ 
++#include "rawmidi.h"
++
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+-- 
+2.47.0
+
+
+From 76d2d285c10b1e368b4bf9494cf9270ae46197cb Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Mon, 25 Nov 2024 15:11:27 +0100
+Subject: [PATCH 4/5] rawmidi: ump - fix snd_ump_block_info_get_block_id double
+ version
+
+The changes for 1.2.13 in Versions.in.in file matches also old
+1.2.10 function snd_ump_block_info_get_block_id:
+
+1 Removed function:
+
+  [D] 'function void snd_ump_block_info_set_block_id(snd_ump_block_info_t*, unsigned int)'    {snd_ump_block_info_set_block_id@@ALSA_1.2.10}
+
+Add 1.2.10 symbol back, but keep 1.2.13 symbol as default.
+
+Closes: https://github.com/alsa-project/alsa-lib/issues/422
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/rawmidi/ump.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/rawmidi/ump.c b/src/rawmidi/ump.c
+index d3676afb..b1246c33 100644
+--- a/src/rawmidi/ump.c
++++ b/src/rawmidi/ump.c
+@@ -750,11 +750,20 @@ int snd_ump_block_info_get_device(const snd_ump_block_info_t *info)
+  * \param info pointer to a snd_ump_block_info_t structure
+  * \return ID number of the given UMP block
+  */
++#ifndef DOXYGEN
++EXPORT_SYMBOL unsigned int INTERNAL(snd_ump_block_info_get_block_id)(const snd_ump_block_info_t *info)
++#else
+ unsigned int snd_ump_block_info_get_block_id(const snd_ump_block_info_t *info)
++#endif
+ {
+ 	return info->block_id;
+ }
+ 
++#ifndef DOC_HIDDEN
++use_symbol_version(__snd_ump_block_info_get_block_id, snd_ump_block_info_get_block_id, ALSA_1.2.10);
++use_default_symbol_version(__snd_ump_block_info_get_block_id, snd_ump_block_info_get_block_id, ALSA_1.2.13);
++#endif /* DOC_HIDDEN */
++
+ /**
+  * \brief get UMP block activeness
+  * \param info pointer to a snd_ump_block_info_t structure
+-- 
+2.47.0
+
+
+From 352cbc5eb94a271a9c3c0ff5bf1742232a69e0d0 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Mon, 25 Nov 2024 16:17:30 +0100
+Subject: [PATCH 5/5] rawmidi: ump - fix snd_ump_block_info_set_block_id double
+ version
+
+Fix mistake snd_ump_block_info_get_block_id / snd_ump_block_info_set_block_id .
+
+Fixes: 76d2d285 ("rawmidi: ump - fix snd_ump_block_info_get_block_id double version")
+Link: https://github.com/alsa-project/alsa-lib/issues/422
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/rawmidi/ump.c | 19 ++++++++++---------
+ 1 file changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/src/rawmidi/ump.c b/src/rawmidi/ump.c
+index b1246c33..6807e877 100644
+--- a/src/rawmidi/ump.c
++++ b/src/rawmidi/ump.c
+@@ -750,20 +750,11 @@ int snd_ump_block_info_get_device(const snd_ump_block_info_t *info)
+  * \param info pointer to a snd_ump_block_info_t structure
+  * \return ID number of the given UMP block
+  */
+-#ifndef DOXYGEN
+-EXPORT_SYMBOL unsigned int INTERNAL(snd_ump_block_info_get_block_id)(const snd_ump_block_info_t *info)
+-#else
+ unsigned int snd_ump_block_info_get_block_id(const snd_ump_block_info_t *info)
+-#endif
+ {
+ 	return info->block_id;
+ }
+ 
+-#ifndef DOC_HIDDEN
+-use_symbol_version(__snd_ump_block_info_get_block_id, snd_ump_block_info_get_block_id, ALSA_1.2.10);
+-use_default_symbol_version(__snd_ump_block_info_get_block_id, snd_ump_block_info_get_block_id, ALSA_1.2.13);
+-#endif /* DOC_HIDDEN */
+-
+ /**
+  * \brief get UMP block activeness
+  * \param info pointer to a snd_ump_block_info_t structure
+@@ -881,12 +872,22 @@ void snd_ump_block_info_set_device(snd_ump_block_info_t *info, unsigned int devi
+  *
+  * This function is mostly used for setting the block ID to query.
+  */
++#ifndef DOXYGEN
++EXPORT_SYMBOL void INTERNAL(snd_ump_block_info_set_block_id)(snd_ump_block_info_t *info,
++							     unsigned int id)
++#else
+ void snd_ump_block_info_set_block_id(snd_ump_block_info_t *info,
+ 				     unsigned int id)
++#endif
+ {
+ 	info->block_id = id;
+ }
+ 
++#ifndef DOC_HIDDEN
++use_symbol_version(__snd_ump_block_info_set_block_id, snd_ump_block_info_set_block_id, ALSA_1.2.10);
++use_default_symbol_version(__snd_ump_block_info_set_block_id, snd_ump_block_info_set_block_id, ALSA_1.2.13);
++#endif /* DOC_HIDDEN */
++
+ /**
+  * \brief set activeness to snd_ump_block_info_t structure
+  * \param info pointer to a snd_ump_block_info_t structure
+-- 
+2.47.0
+
