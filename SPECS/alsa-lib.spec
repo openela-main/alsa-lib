@@ -9,7 +9,7 @@
 Summary:  The Advanced Linux Sound Architecture (ALSA) library
 Name:     alsa-lib
 Version:  %{version_alsa_lib}
-Release:  1%{?prever_dot}%{?dist}
+Release:  2%{?prever_dot}%{?dist}
 License:  LGPL-2.1-or-later
 URL:      http://www.alsa-project.org/
 
@@ -167,6 +167,9 @@ rm %{buildroot}/%{_includedir}/asoundlib.h
 %{_datadir}/alsa/topology
 
 %changelog
+* Tue Feb  3 2026 Jaroslav Kysela <perex@perex.cz> - 1.2.14-2
+- add control API remap fix
+
 * Thu Jun 26 2025 Jaroslav Kysela <perex@perex.cz> - 1.2.14-1
 - update to alsa-lib 1.2.14 and alsa-ucm-conf 1.2.14
 
