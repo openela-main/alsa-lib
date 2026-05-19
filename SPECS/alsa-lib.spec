@@ -2,9 +2,12 @@
 #define  prever_dot .rc3
 #define  postver    a
 
-%define version_alsa_lib  1.2.14
-%define version_alsa_ucm  1.2.14
+%define version_alsa_lib  1.2.15.3
+%define version_alsa_ucm  1.2.15.3
 %define version_alsa_tplg 1.2.5
+
+%global lib_patch         1
+%global ucm_patch         0
 
 Summary:  The Advanced Linux Sound Architecture (ALSA) library
 Name:     alsa-lib
@@ -13,14 +16,18 @@ Release:  2%{?prever_dot}%{?dist}
 License:  LGPL-2.1-or-later
 URL:      http://www.alsa-project.org/
 
-Source:   ftp://ftp.alsa-project.org/pub/lib/%{name}-%{version}%{?prever}%{?postver}.tar.bz2
-Source1:  ftp://ftp.alsa-project.org/pub/lib/alsa-ucm-conf-%{version_alsa_ucm}.tar.bz2
-Source2:  ftp://ftp.alsa-project.org/pub/lib/alsa-topology-conf-%{version_alsa_tplg}.tar.bz2
+Source:   https://www.alsa-project.org/files/pub/lib/%{name}-%{version}%{?prever}%{?postver}.tar.bz2
+Source1:  https://www.alsa-project.org/files/pub/lib/alsa-ucm-conf-%{version_alsa_ucm}.tar.bz2
+Source2:  https://www.alsa-project.org/files/pub/lib/alsa-topology-conf-%{version_alsa_tplg}.tar.bz2
 Source10: asound.conf
 Source11: modprobe-dist-alsa.conf
 Source12: modprobe-dist-oss.conf
+%if %{ucm_patch}
 Source40: alsa-ucm-conf.patch
+%endif
+%if %{lib_patch}
 Patch0:   alsa-git.patch
+%endif
 Patch1:   alsa-lib-1.2.3.1-config.patch
 Patch2:   alsa-lib-1.2.10-glibc-open.patch
 
@@ -70,7 +77,9 @@ contains alsa-lib configuration of SoC topology
 
 %prep
 %setup -q -n %{name}-%{version}%{?prever}%{?postver}
+%if %{lib_patch}
 %patch -P 0 -p1 -b .alsa-git
+%endif
 %patch -P 1 -p1 -b .config
 %patch -P 2 -p1 -b .glibc-open
 
@@ -116,7 +125,9 @@ mkdir -p %{buildroot}/%{_datadir}/alsa/ucm2
 
 # Unpack UCMs
 tar xvjf %{SOURCE1} -C %{buildroot}/%{_datadir}/alsa --strip-components=1 "*/ucm" "*/ucm2"
+%if %{ucm_patch}
 patch -d %{buildroot}/%{_datadir}/alsa -p1 < %{SOURCE40}
+%endif
 
 # Create topology directory
 mkdir -p %{buildroot}/%{_datadir}/alsa/topology
@@ -167,8 +178,11 @@ rm %{buildroot}/%{_includedir}/asoundlib.h
 %{_datadir}/alsa/topology
 
 %changelog
-* Tue Feb  3 2026 Jaroslav Kysela <perex@perex.cz> - 1.2.14-2
-- add control API remap fix
+* Tue Feb 10 2026 Jaroslav Kysela <perex@perex.cz> - 1.2.15.3-2
+- fix control API remap issue
+
+* Thu Jan  8 2026 Jaroslav Kysela <perex@perex.cz> - 1.2.15.3-1
+- update to alsa-lib 1.2.15.3 and alsa-ucm-conf 1.2.15.3
 
 * Thu Jun 26 2025 Jaroslav Kysela <perex@perex.cz> - 1.2.14-1
 - update to alsa-lib 1.2.14 and alsa-ucm-conf 1.2.14

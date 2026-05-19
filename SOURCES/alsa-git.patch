@@ -1,38 +1,142 @@
-From 07ec2ad34c42dba8656d3f543164f360f481c52e Mon Sep 17 00:00:00 2001
-From: Daniel Dadap <ddadap@nvidia.com>
-Date: Thu, 15 May 2025 08:32:35 -0500
-Subject: [PATCH] conf: aliases: add hda-acpi -> HDA-Intel alias
+From 7887fbc6f0f660072d1405231703985b72d40cf1 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Mon, 26 Jan 2026 15:08:54 +0100
+Subject: [PATCH 1/4] ucm: libconfig parser - fix pathname for substituted file
 
-The new snd_hda_acpi driver in Linux exposes the existing Azalia
-interface to non-PCI devices advertised over ACPI. Add an alias
-to the existing HDA-Intel configuration file so that devices using
-this driver can be discovered properly.
+The path name substituted file contents and normal file contents
+should be handled similary. Use correct function determining
+the right base directory name.
 
-Signed-off-by: Daniel Dadap <ddadap@nvidia.com>
-Signed-off-by: Takashi Iwai <tiwai@suse.de>
+Fixes: 8f5779eb ("ucm: add LibraryConfig support")
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
 ---
- src/conf/cards/aliases.conf | 1 +
- 1 file changed, 1 insertion(+)
+ src/ucm/parser.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
 
-diff --git a/src/conf/cards/aliases.conf b/src/conf/cards/aliases.conf
-index a54824ae..e2d59aa7 100644
---- a/src/conf/cards/aliases.conf
-+++ b/src/conf/cards/aliases.conf
-@@ -57,6 +57,7 @@ CMI8786 cards.CMI8788
- CMI8787 cards.CMI8788
- pistachio cards.pistachio-card
- VC4-HDMI cards.vc4-hdmi
-+hda-acpi cards.HDA-Intel
- 
- <confdir:ctl/default.conf>
- <confdir:pcm/default.conf>
+diff --git a/src/ucm/parser.c b/src/ucm/parser.c
+index 60861213..baa19144 100644
+--- a/src/ucm/parser.c
++++ b/src/ucm/parser.c
+@@ -804,7 +804,7 @@ static int parse_libconfig1(snd_use_case_mgr_t *uc_mgr, snd_config_t *cfg)
+ 	if (file) {
+ 		if (substfile) {
+ 			snd_config_t *cfg;
+-			err = uc_mgr_config_load(uc_mgr->conf_format, file, &cfg);
++			err = uc_mgr_config_load_file(uc_mgr, file, &cfg);
+ 			if (err < 0)
+ 				return err;
+ 			err = uc_mgr_substitute_tree(uc_mgr, cfg);
 -- 
-2.49.0
+2.52.0
+
+
+From bc332f4211af98054e7c64aabbe59c7a16ac4e36 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Thu, 29 Jan 2026 15:33:45 +0100
+Subject: [PATCH 2/4] control: ctlparse - make numid parsing more robust
+
+Also correct the last amixer stderr printf to snd_error().
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/control/ctlparse.c | 24 ++++++++++++++++++------
+ 1 file changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/src/control/ctlparse.c b/src/control/ctlparse.c
+index b23234d7..3bd86435 100644
+--- a/src/control/ctlparse.c
++++ b/src/control/ctlparse.c
+@@ -156,8 +156,10 @@ char *snd_ctl_ascii_elem_id_get(snd_ctl_elem_id_t *id)
+ int __snd_ctl_ascii_elem_id_parse(snd_ctl_elem_id_t *dst, const char *str,
+ 				  const char **ret_ptr)
+ {
+-	int c, size, numid;
++	char buf[64];
++	int c, size;
+ 	int err = -EINVAL;
++	long l;
+ 	char *ptr;
+ 
+ 	while (isspace(*str))
+@@ -168,12 +170,23 @@ int __snd_ctl_ascii_elem_id_parse(snd_ctl_elem_id_t *dst, const char *str,
+ 	while (*str) {
+ 		if (!strncasecmp(str, "numid=", 6)) {
+ 			str += 6;
+-			numid = atoi(str);
+-			if (numid <= 0) {
+-				fprintf(stderr, "amixer: Invalid numid %d\n", numid);
++			ptr = buf;
++			size = 0;
++			while (*str && *str != ',') {
++				if (size < (int)sizeof(buf)) {
++					*ptr++ = *str;
++					size++;
++				}
++				str++;
++			}
++			*ptr = '\0';
++			if (safe_strtol(buf, &l) < 0)
++				l = -1;
++			if (l <= 0 || l >= INT32_MAX) {
++				snd_error(CONTROL, "Invalid numid %ld (%s)", l, buf);
+ 				goto out;
+ 			}
+-			snd_ctl_elem_id_set_numid(dst, atoi(str));
++			snd_ctl_elem_id_set_numid(dst, (int)l);
+ 			while (isdigit(*str))
+ 				str++;
+ 		} else if (!strncasecmp(str, "iface=", 6)) {
+@@ -200,7 +213,6 @@ int __snd_ctl_ascii_elem_id_parse(snd_ctl_elem_id_t *dst, const char *str,
+ 				goto out;
+ 			}
+ 		} else if (!strncasecmp(str, "name=", 5)) {
+-			char buf[64];
+ 			str += 5;
+ 			ptr = buf;
+ 			size = 0;
+-- 
+2.52.0
+
+
+From 5f7fe33002d2d98d84f72e381ec2cccc0d5d3d40 Mon Sep 17 00:00:00 2001
+From: Jaroslav Kysela <perex@perex.cz>
+Date: Thu, 29 Jan 2026 16:51:09 +0100
+Subject: [PATCH 3/4] topology: decoder - add boundary check for channel mixer
+ count
+
+Malicious binary topology file may cause heap corruption.
+
+CVE: CVE-2026-25068
+
+Signed-off-by: Jaroslav Kysela <perex@perex.cz>
+---
+ src/topology/ctl.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/topology/ctl.c b/src/topology/ctl.c
+index a0c24518..322c461c 100644
+--- a/src/topology/ctl.c
++++ b/src/topology/ctl.c
+@@ -1250,6 +1250,11 @@ int tplg_decode_control_mixer1(snd_tplg_t *tplg,
+ 	if (mc->num_channels > 0) {
+ 		map = tplg_calloc(heap, sizeof(*map));
+ 		map->num_channels = mc->num_channels;
++		if (map->num_channels > SND_TPLG_MAX_CHAN ||
++		    map->num_channels > SND_SOC_TPLG_MAX_CHAN) {
++			snd_error(TOPOLOGY, "mixer: unexpected channel count %d", map->num_channels);
++			return -EINVAL;
++		}
+ 		for (i = 0; i < map->num_channels; i++) {
+ 			map->channel[i].reg = mc->channel[i].reg;
+ 			map->channel[i].shift = mc->channel[i].shift;
+-- 
+2.52.0
+
 
 From 166407dae4c91583aff43624ce1eafb8695a4482 Mon Sep 17 00:00:00 2001
 From: Jaroslav Kysela <perex@perex.cz>
 Date: Tue, 3 Feb 2026 17:46:02 +0100
-Subject: [PATCH] control: remap - fix numid lookup issue
+Subject: [PATCH 4/4] control: remap - fix numid lookup issue
 
 The 'amixer controls' and 'amixer cget numid=' combo was not working
 correctly when the remapping was active. This assert was trigerred:
