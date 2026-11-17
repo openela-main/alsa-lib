@@ -2,8 +2,8 @@
 #define  prever_dot .rc3
 #define  postver    a
 
-%define version_alsa_lib  1.2.15.3
-%define version_alsa_ucm  1.2.15.3
+%define version_alsa_lib  1.2.16.1
+%define version_alsa_ucm  1.2.16.1
 %define version_alsa_tplg 1.2.5
 
 %global lib_patch         0
@@ -94,7 +94,7 @@ contains alsa-lib configuration of SoC topology
 # Enable custom LTO flags
 %define _lto_cflags -flto -ffat-lto-objects -flto-partition=none
 
-autoreconf -vif
+#autoreconf -vif
 %configure --disable-aload --with-plugindir=%{_libdir}/alsa-lib --disable-alisp
 
 # Remove useless /usr/lib64 rpath on 64bit archs
@@ -178,6 +178,9 @@ rm %{buildroot}/%{_includedir}/asoundlib.h
 %{_datadir}/alsa/topology
 
 %changelog
+* Mon Jun 22 2026 Jaroslav Kysela <perex@perex.cz> - 1.2.16.1-1
+- update to alsa-lib 1.2.16.1 and alsa-ucm-conf 1.2.16.1
+
 * Thu Jan  8 2026 Jaroslav Kysela <perex@perex.cz> - 1.2.15.3-1
 - update to alsa-lib 1.2.15.3 and alsa-ucm-conf 1.2.15.3
 
